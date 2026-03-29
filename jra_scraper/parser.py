@@ -28,6 +28,13 @@ class HorseEntry:
     horse_url: str
 
 
+@dataclass
+class HeaderMatch:
+    index: int
+    canonical: str
+    raw: str
+
+
 class JRAParser:
     """Parser tuned for JRA/JRADB style HTML pages."""
 
@@ -38,11 +45,31 @@ class JRAParser:
     )
 
     HORSE_ANCHOR_SELECTORS = (
-        'td.horse a[href]',
-        'table tr td:nth-child(3) a[href]',
+        "td.horse a[href]",
+        "table tr td:nth-child(3) a[href]",
         'a[href*="/JRADB/accessU.html"]',
         'a[href*="/JRADB/accessC.html"]',
     )
+
+    HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+        "date": ("日付", "年月日"),
+        "course": ("開催", "競馬場", "場"),
+        "race_name": ("レース名", "レース", "競走名", "前走"),
+        "position": ("着順", "着", "4走前"),
+        "time": ("タイム", "走破タイム"),
+        "weight": ("斤量",),
+        "jockey": ("騎手", "騎手名"),
+        "distance": ("距離", "前々走", "3走前"),
+        "pace": ("前半", "前3F", "通過前半", "前半3F"),
+        "last_3f": ("上り", "上り3F", "上がり", "上がり3F", "末3F", "後3F"),
+        "track_condition": ("馬場", "馬場状態"),
+        "weather": ("天候",),
+        "passing_order": ("通過", "4角", "4C", "コーナー通過順"),
+        "odds": ("単勝", "単勝オッズ", "オッズ"),
+        "popularity": ("人気",),
+    }
+
+    REQUIRED_CANONICAL_HEADERS = ("position", "last_3f", "popularity")
 
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url
@@ -122,12 +149,21 @@ class JRAParser:
         soup = BeautifulSoup(html, "html.parser")
         table = self._select_last5_table(soup)
         if table is None:
+            logger.warning("No suitable last5 table found for horse=%s url=%s", horse_name, horse_url)
             return []
 
-        headers = [self._norm(cell.get_text(" ", strip=True)) for cell in table.select("tr th")]
-        for required in ("着順", "上り", "上り3F", "人気"):
-            if required not in headers:
-                logger.warning("Missing expected header '%s' in horse history table", required)
+        headers = self._extract_headers(table)
+        header_matches = self._build_header_matches(headers)
+
+        found_canonicals = {m.canonical for m in header_matches}
+        for required in self.REQUIRED_CANONICAL_HEADERS:
+            if required not in found_canonicals:
+                logger.warning(
+                    "Missing expected canonical header '%s' in horse history table for horse=%s raw_headers=%s",
+                    required,
+                    horse_name,
+                    headers,
+                )
 
         body_rows = [tr for tr in table.select("tr") if tr.select("td")]
 
@@ -136,7 +172,8 @@ class JRAParser:
             values = [self._norm(td.get_text(" ", strip=True)) for td in tr.select("td")]
             if not any(values):
                 continue
-            mapped = self._map_row(headers, values)
+
+            mapped = self._map_row(header_matches, values)
             mapped.update(
                 {
                     "race_id": race_id,
@@ -147,44 +184,94 @@ class JRAParser:
                 }
             )
             out.append(mapped)
+
         return out
 
     def _select_last5_table(self, soup: BeautifulSoup):
-        keyword_sets = [{"日付", "開催", "レース名", "着順"}, {"前走", "前々走", "3走前", "4走前"}]
+        best_table = None
+        best_score = -1
+
         for table in soup.select("table"):
-            headers = {self._norm(th.get_text(" ", strip=True)) for th in table.select("tr th")}
+            headers = self._extract_headers(table)
             if not headers:
                 continue
-            if any(len(headers & ks) >= 2 for ks in keyword_sets):
-                return table
+
+            matches = self._build_header_matches(headers)
+            canonicals = {m.canonical for m in matches}
+            score = 0
+
+            if "position" in canonicals:
+                score += 3
+            if "race_name" in canonicals:
+                score += 3
+            if "distance" in canonicals:
+                score += 2
+            if "time" in canonicals:
+                score += 2
+            if "last_3f" in canonicals:
+                score += 3
+            if "popularity" in canonicals:
+                score += 2
+            if "date" in canonicals:
+                score += 1
+            if "jockey" in canonicals:
+                score += 1
+            if "weight" in canonicals:
+                score += 1
+
+            body_row_count = len([tr for tr in table.select("tr") if tr.select("td")])
+            if body_row_count >= 5:
+                score += 2
+
+            if score > best_score:
+                best_score = score
+                best_table = table
+
+        return best_table
+
+    def _extract_headers(self, table) -> list[str]:
+        header_rows = table.select("tr")
+        if not header_rows:
+            return []
+
+        for tr in header_rows[:3]:
+            cells = tr.select("th")
+            if not cells:
+                cells = tr.select("td")
+            values = [self._norm(cell.get_text(" ", strip=True)) for cell in cells]
+            non_empty = [v for v in values if v]
+            if len(non_empty) >= 3:
+                return values
+
+        return []
+
+    def _build_header_matches(self, headers: list[str]) -> list[HeaderMatch]:
+        matches: list[HeaderMatch] = []
+        for idx, raw_header in enumerate(headers):
+            canonical = self._canonicalize_header(raw_header)
+            if canonical:
+                matches.append(HeaderMatch(index=idx, canonical=canonical, raw=raw_header))
+        return matches
+
+    def _canonicalize_header(self, header: str) -> str | None:
+        normalized = self._normalize_header_label(header)
+        for canonical, aliases in self.HEADER_ALIASES.items():
+            alias_norms = {self._normalize_header_label(a) for a in aliases}
+            if normalized in alias_norms:
+                return canonical
         return None
 
     @staticmethod
-    def _map_row(headers: list[str], values: list[str]) -> dict[str, str]:
-        mapping = {
-            "日付": "date",
-            "開催": "course",
-            "レース名": "race_name",
-            "着順": "position",
-            "タイム": "time",
-            "斤量": "weight",
-            "騎手": "jockey",
-            "距離": "distance",
-            "前半": "pace",
-            "前3F": "pace",
-            "上り": "last_3f",
-            "上り3F": "last_3f",
-            "馬場": "track_condition",
-            "天候": "weather",
-            "通過": "passing_order",
-            "4角": "passing_order",
-            "単勝": "odds",
-            "人気": "popularity",
-            "前走": "race_name",
-            "前々走": "course",
-            "3走前": "distance",
-            "4走前": "position",
-        }
+    def _normalize_header_label(value: str) -> str:
+        value = JRAParser._norm(value)
+        value = value.replace(" ", "")
+        value = value.replace("　", "")
+        value = value.replace("Ｆ", "F").replace("３", "3").replace("４", "4")
+        value = value.replace("ｆ", "F").replace("ｆ", "F")
+        return value
+
+    @staticmethod
+    def _map_row(header_matches: list[HeaderMatch], values: list[str]) -> dict[str, str]:
         record = {
             "date": "",
             "race_name": "",
@@ -202,13 +289,16 @@ class JRAParser:
             "odds": "",
             "popularity": "",
         }
-        for idx, value in enumerate(values):
-            key = headers[idx] if idx < len(headers) else ""
-            target = mapping.get(key)
-            if target:
-                record[target] = value
 
-        # split combined distance field (e.g., 芝2000)
+        for match in header_matches:
+            if match.index >= len(values):
+                continue
+            value = values[match.index]
+            if not value:
+                continue
+            record[match.canonical] = value
+
+        # split combined distance field (e.g., 芝2000 / ダ1200)
         raw_dist = record["distance"]
         if raw_dist:
             if not record["course"]:
@@ -218,6 +308,19 @@ class JRAParser:
             m_dist = re.search(r"(\d{3,4})", raw_dist)
             if m_dist:
                 record["distance"] = m_dist.group(1)
+
+        # if course field contains venue text plus surface/distance, salvage surface
+        raw_course = record["course"]
+        if raw_course and raw_course not in ("芝", "ダート", "障害"):
+            m_course = re.search(r"(芝|ダ|ダート|障害)", raw_course)
+            if m_course:
+                record["course"] = "ダート" if m_course.group(1) in ("ダ", "ダート") else m_course.group(1)
+
+        # normalize passing order to last corner if pattern like 12-10-8-5
+        if record["passing_order"]:
+            parts = [p for p in re.split(r"[-→]", record["passing_order"]) if p.strip()]
+            if parts:
+                record["passing_order"] = parts[-1].strip()
 
         return record
 
