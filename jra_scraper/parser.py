@@ -118,7 +118,7 @@ class JRAParser:
         horse_id: str,
         horse_name: str,
         horse_url: str,
-    ) -> list[dict[str, str | None]]:
+    ) -> list[dict[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
         table = self._select_last5_table(soup)
         if table is None:
@@ -128,9 +128,10 @@ class JRAParser:
         for required in ("着順", "上り", "上り3F", "人気"):
             if required not in headers:
                 logger.warning("Missing expected header '%s' in horse history table", required)
+
         body_rows = [tr for tr in table.select("tr") if tr.select("td")]
 
-        out: list[dict[str, str | None]] = []
+        out: list[dict[str, str]] = []
         for run_idx, tr in enumerate(body_rows[:5], start=1):
             values = [self._norm(td.get_text(" ", strip=True)) for td in tr.select("td")]
             if not any(values):
@@ -159,7 +160,7 @@ class JRAParser:
         return None
 
     @staticmethod
-    def _map_row(headers: list[str], values: list[str]) -> dict[str, str | None]:
+    def _map_row(headers: list[str], values: list[str]) -> dict[str, str]:
         mapping = {
             "日付": "date",
             "開催": "course",
@@ -185,21 +186,21 @@ class JRAParser:
             "4走前": "position",
         }
         record = {
-            "date": None,
-            "race_name": None,
-            "course": None,
-            "distance": None,
-            "position": None,
-            "time": None,
-            "weight": None,
-            "jockey": None,
-            "pace": None,
-            "last_3f": None,
-            "track_condition": None,
-            "weather": None,
-            "passing_order": None,
-            "odds": None,
-            "popularity": None,
+            "date": "",
+            "race_name": "",
+            "course": "",
+            "distance": "",
+            "position": "",
+            "time": "",
+            "weight": "",
+            "jockey": "",
+            "pace": "",
+            "last_3f": "",
+            "track_condition": "",
+            "weather": "",
+            "passing_order": "",
+            "odds": "",
+            "popularity": "",
         }
         for idx, value in enumerate(values):
             key = headers[idx] if idx < len(headers) else ""
@@ -208,7 +209,7 @@ class JRAParser:
                 record[target] = value
 
         # split combined distance field (e.g., 芝2000)
-        raw_dist = record["distance"] or ""
+        raw_dist = record["distance"]
         if raw_dist:
             if not record["course"]:
                 m_course = re.search(r"(芝|ダ|ダート|障害)", raw_dist)

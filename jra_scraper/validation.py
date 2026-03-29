@@ -4,7 +4,6 @@ import hashlib
 import re
 from collections import defaultdict
 from datetime import datetime
-from statistics import median
 
 OUTPUT_COLUMNS = [
     "row_id",
@@ -30,11 +29,8 @@ OUTPUT_COLUMNS = [
 ]
 
 
-NUMERIC_COLUMNS = ("distance", "position", "time", "weight", "pace", "last_3f", "passing_order", "odds", "popularity")
-
-
-def validate_rows(rows: list[dict[str, str | None]]) -> list[dict[str, str | None]]:
-    deduped: list[dict[str, str | None]] = []
+def validate_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    deduped: list[dict[str, str]] = []
     seen: set[str] = set()
 
     for row in rows:
@@ -45,21 +41,21 @@ def validate_rows(rows: list[dict[str, str | None]]) -> list[dict[str, str | Non
         seen.add(normalized["row_id"])
         deduped.append(normalized)
 
-    by_horse: dict[tuple[str, str], list[dict[str, str | None]]] = defaultdict(list)
+    by_horse: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
     for row in deduped:
         by_horse[(row["race_id"], row["horse_id"] or row["horse_name"])].append(row)
 
-    out: list[dict[str, str | None]] = []
+    out: list[dict[str, str]] = []
     for group_rows in by_horse.values():
         sorted_rows = sorted(group_rows, key=lambda r: _safe_int(r["run_index"]))
         out.extend(sorted_rows[:5])
-    out = _impute_missing_values(out)
-    out = _remove_outliers(out)
+
     return out
 
 
-def _normalize_row(row: dict[str, str | None]) -> dict[str, str | None]:
-    data = {col: _as_str(row.get(col)) for col in OUTPUT_COLUMNS if col != "row_id"}
+def _normalize_row(row: dict[str, str]) -> dict[str, str]:
+    data = {col: str(row.get(col, "")).strip() for col in OUTPUT_COLUMNS if col != "row_id"}
+
     data["horse_id"] = _normalize_horse_id(data["horse_id"], data["horse_name"])
     data["date"] = _normalize_date(data["date"])
     data["distance"] = _normalize_int(data["distance"])
@@ -71,6 +67,7 @@ def _normalize_row(row: dict[str, str | None]) -> dict[str, str | None]:
     data["passing_order"] = _normalize_passing_order(data["passing_order"])
     data["odds"] = _normalize_float(data["odds"])
     data["popularity"] = _normalize_int(data["popularity"])
+
     return data
 
 
@@ -127,61 +124,12 @@ def _normalize_time(value: str) -> str:
 
 
 def _normalize_passing_order(value: str) -> str:
-    # keep 4th-corner by taking last section from 1-2-3-4 patterns
     if not value:
         return ""
     parts = [p for p in re.split(r"[-→]", value) if p.strip()]
     if not parts:
         return ""
     return _normalize_int(parts[-1])
-
-
-def _impute_missing_values(rows: list[dict[str, str | None]]) -> list[dict[str, str | None]]:
-    if not rows:
-        return rows
-    medians: dict[str, str] = {}
-    for col in NUMERIC_COLUMNS:
-        vals = []
-        for row in rows:
-            try:
-                if row[col] != "":
-                    vals.append(float(row[col]))
-            except ValueError:
-                continue
-        medians[col] = "" if not vals else _normalize_float(str(median(vals)))
-
-    for row in rows:
-        for col in NUMERIC_COLUMNS:
-            if row[col] == "":
-                row[col] = medians[col]
-        for col in ("date", "race_name", "course", "jockey", "track_condition", "weather"):
-            if row[col] == "":
-                row[col] = None  # 明示的欠損
-    return rows
-
-
-def _remove_outliers(rows: list[dict[str, str | None]]) -> list[dict[str, str | None]]:
-    cleaned: list[dict[str, str | None]] = []
-    for row in rows:
-        # 物理的に不自然な値を除外（推測値を入れない）
-        if row["distance"] and not (800 <= _safe_int(row["distance"]) <= 4000):
-            continue
-        if row["last_3f"]:
-            v = float(row["last_3f"])
-            if not (30 <= v <= 50):
-                continue
-        if row["odds"]:
-            v = float(row["odds"])
-            if not (1 <= v <= 999):
-                continue
-        cleaned.append(row)
-    return cleaned
-
-
-def _as_str(value: str | None) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
 
 
 def _safe_int(value: str) -> int:

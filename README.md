@@ -1,6 +1,7 @@
 # JRA Race Data Scraper / EV Pipeline
 
-JRAデータ取得 → 整形 → EV算出 → 買い目生成 → note投稿準備までを再現可能に実行するパイプラインです。
+JRAのレースデータを取得し、**EVモデリングに直接使える整形済みCSV**を生成し、
+さらに **買い目生成** と **note投稿準備** まで再現可能に実行する継続運用向けパイプラインです。
 
 ## Config-driven execution
 
@@ -8,14 +9,58 @@ JRAデータ取得 → 整形 → EV算出 → 買い目生成 → note投稿準
 
 `config/races.json` の各要素は以下キーを持ちます:
 
-- `race_name`
-- `race_date`
-- `track`
-- `race_number`
-- `source_url`
-- `output_slug`
-- `note_title`
-- `note_tags`
+* `race_name`
+* `race_date`
+* `track`
+* `race_number`
+* `source_url`
+* `output_slug`
+* `note_title`
+* `note_tags`
+
+## What this pipeline now guarantees
+
+* **Structured output columns**
+
+  * `date, race_name, course, distance, position, time, weight, jockey`
+  * `pace, last_3f, track_condition, weather, passing_order, odds, popularity`
+* **Unique identifiers**
+
+  * `race_id` = `YYYYMMDD_track_raceNo`
+  * `horse_id` = URL由来ID（取得できない場合は馬名正規化）
+  * `row_id` = 安定ハッシュ（冪等更新用）
+* **Normalization**
+
+  * `distance` / `position` / `popularity` は数値抽出
+  * `time` / `pace` は秒 or 数値へ正規化
+  * `weight` / `last_3f` / `odds` は数値化
+  * `date` は `YYYY-MM-DD`
+* **Raw persistence + reprocess**
+
+  * 取得HTMLは `data/raw/` へ保存
+  * `--reprocess-raw` でfetchせず再処理可能
+* **Incremental + idempotent pipeline**
+
+  * `pipeline_state.json` の `processed_race_ids` で既処理レースをスキップ
+  * CSV再実行時も `row_id` 重複排除でデータ重複なし
+
+## Architecture
+
+* `jra_scraper/scraper.py`: HTTP, retry/backoff, raw cache, cache-only再処理
+* `jra_scraper/parser.py`: JRA/JRADB構造の解析と列マッピング
+* `jra_scraper/validation.py`: 型正規化・ID付与・重複除去・5件上限
+* `jra_scraper/pipeline.py`: 増分更新、状態管理、CSV出力
+* `analysis/ev.py`: EV算出
+* `strategy/betting.py`: 買い目生成
+* `report/note.py`: note用Markdown生成
+
+## Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
 ## One-command analysis pipeline
 
@@ -38,13 +83,38 @@ python scripts/run_pipeline.py
 python scripts/publish_note.py
 ```
 
-- 分析フェーズと投稿フェーズを分離しています。
-- このリポジトリでは安全のため実投稿は行わず、`report/publish_preview.txt` を生成する dry-run 実装です。
+* 分析フェーズと投稿フェーズを分離しています
+* このリポジトリでは安全のため実投稿は行わず、`report/publish_preview.txt` を生成する dry-run 実装です
 
 ## Existing scripts
 
-- `scripts/run_example.py`: 既存スクレイプ実行例
-- `scripts/run_analysis.py`: 既存分析実行例（単体）
+* `scripts/run_example.py`: スクレイプ実行例
+* `scripts/run_analysis.py`: 分析実行例（単体）
+* `scripts/run_pipeline.py`: 構成駆動の本番用エントリポイント
+* `scripts/publish_note.py`: note投稿準備 / dry-run
+
+## CSV schema (`race_last5.csv`)
+
+* `row_id`
+* `race_id`
+* `horse_id`
+* `horse_name`
+* `run_index`
+* `date`
+* `race_name`
+* `course`
+* `distance`
+* `position`
+* `time`
+* `weight`
+* `jockey`
+* `pace`
+* `last_3f`
+* `track_condition`
+* `weather`
+* `passing_order` (4角通過順)
+* `odds`
+* `popularity`
 
 ## Testing
 

@@ -17,20 +17,46 @@ from jra_scraper.pipeline import JRAPipeline
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run JRA scraper pipeline")
-    parser.add_argument("--config-path", default="config/races.json", help="Race config json path")
-    parser.add_argument("--output-path", default="data/processed/race_last5.csv", help="CSV output path")
-    parser.add_argument("--state-path", default="data/processed/pipeline_state.json", help="State json path")
-    parser.add_argument("--reprocess-raw", action="store_true", help="Do not fetch network; parse only cached raw HTML")
-    parser.add_argument("--force-rebuild", action="store_true", help="Ignore incremental state and rebuild CSV")
+
+    parser.add_argument(
+        "--config-path",
+        default="config/races.json",
+        help="Race config json path",
+    )
+    parser.add_argument(
+        "--output-path",
+        default="data/processed/race_last5.csv",
+        help="CSV output path",
+    )
+    parser.add_argument(
+        "--state-path",
+        default="data/processed/pipeline_state.json",
+        help="State json path",
+    )
+    parser.add_argument(
+        "--reprocess-raw",
+        action="store_true",
+        help="Parse only cached HTML (no network)",
+    )
+    parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Ignore state and rebuild",
+    )
     parser.add_argument(
         "--race-list-path",
         default="/JRADB/accessS.html",
-        help="Relative path to race list page",
+        help="Race list relative path",
     )
+
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    )
 
+    # config読み込み
     cfg = json.loads(Path(args.config_path).read_text(encoding="utf-8"))
     race_urls = [r["source_url"] for r in cfg]
 
@@ -39,14 +65,21 @@ def main() -> None:
         output_csv=Path(args.output_path),
         state_path=Path(args.state_path),
     )
+
     pipeline = JRAPipeline(config)
+
     try:
         rows = pipeline.run(
             race_urls=race_urls,
             reprocess_raw=args.reprocess_raw,
             force_rebuild=args.force_rebuild,
         )
-        logging.info("Finished. Rows=%d output=%s state=%s", len(rows), config.output_csv, config.state_path)
+        logging.info(
+            "Finished. Rows=%d output=%s state=%s",
+            len(rows),
+            config.output_csv,
+            config.state_path,
+        )
     finally:
         pipeline.close()
 
