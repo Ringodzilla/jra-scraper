@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import ScrapeConfig
-from .parser import JRAParser
+from .parser import JRAParser, RaceLink
 from .scraper import JRAScraper, safe_filename
 from .validation import OUTPUT_COLUMNS, validate_rows
 
@@ -29,13 +29,15 @@ class JRAPipeline:
         race_limit: int = 3,
         horse_limit: int = 8,
         *,
+        race_urls: list[str] | None = None,
         reprocess_raw: bool = False,
         force_rebuild: bool = False,
     ) -> list[dict[str, str]]:
         logger.info(
-            "Pipeline start race_limit=%s horse_limit=%s reprocess_raw=%s force_rebuild=%s",
+            "Pipeline start race_limit=%s horse_limit=%s race_urls=%s reprocess_raw=%s force_rebuild=%s",
             race_limit,
             horse_limit,
+            len(race_urls) if race_urls else 0,
             reprocess_raw,
             force_rebuild,
         )
@@ -47,20 +49,33 @@ class JRAPipeline:
         all_new_rows: list[dict[str, str]] = []
         processed_this_run: list[str] = []
 
-        race_list_html = self.scraper.fetch_relative(
-            self.config.race_list_path,
-            raw_name="race_list.html",
-            use_cache=True,
-            cache_only=reprocess_raw,
-        )
-        if not race_list_html:
-            logger.error("Race list unavailable.")
-            self._write_csv(existing_rows, self.config.output_csv)
-            self._save_state(processed_races, failures, 0, 0)
-            return existing_rows
+        # 🔥 ここが今回の本質（race_urls対応）
+        if race_urls:
+            races = []
+            for idx, race_url in enumerate(race_urls, start=1):
+                races.append(
+                    RaceLink(
+                        race_id=f"direct_{idx:03d}",
+                        race_name=f"direct_race_{idx}",
+                        race_url=race_url,
+                    )
+                )
+            logger.info("Using direct race URLs: %d", len(races))
+        else:
+            race_list_html = self.scraper.fetch_relative(
+                self.config.race_list_path,
+                raw_name="race_list.html",
+                use_cache=True,
+                cache_only=reprocess_raw,
+            )
+            if not race_list_html:
+                logger.error("Race list unavailable.")
+                self._write_csv(existing_rows, self.config.output_csv)
+                self._save_state(processed_races, failures, 0, 0)
+                return existing_rows
 
-        races = self.parser.parse_race_list(race_list_html)[:race_limit]
-        logger.info("Parsed races=%d", len(races))
+            races = self.parser.parse_race_list(race_list_html)[:race_limit]
+            logger.info("Parsed races=%d", len(races))
 
         for race in races:
             if race.race_id in processed_races and not force_rebuild:
@@ -113,12 +128,14 @@ class JRAPipeline:
         final_rows = validate_rows(existing_rows + all_new_rows)
         self._write_csv(final_rows, self.config.output_csv)
         self._save_state(processed_races, failures, len(processed_this_run), len(all_new_rows))
+
         logger.info(
             "Pipeline complete total_rows=%d new_rows=%d processed_races=%d",
             len(final_rows),
             len(all_new_rows),
             len(processed_this_run),
         )
+
         return final_rows
 
     def close(self) -> None:
@@ -145,7 +162,13 @@ class JRAPipeline:
         with self.config.state_path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
-    def _save_state(self, processed_races: set[str], failures: dict[str, int], processed_count: int, new_rows: int) -> None:
+    def _save_state(
+        self,
+        processed_races: set[str],
+        failures: dict[str, int],
+        processed_count: int,
+        new_rows: int,
+    ) -> None:
         payload = {
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "processed_race_ids": sorted(processed_races),
