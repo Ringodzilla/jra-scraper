@@ -1,6 +1,28 @@
 from __future__ import annotations
 
+import csv
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .config import ScrapeConfig
+from .parser import JRAParser, RaceLink
+from .scraper import JRAScraper, safe_filename
+from .validation import validate_rows
+
+
+logger = logging.getLogger(__name__)
+
+
 class JRAPipeline:
+    """Persistent pipeline with caching, incremental updates, and idempotent writes."""
+
+    def __init__(self, config: ScrapeConfig | None = None) -> None:
+        self.config = config or ScrapeConfig()
+        self.config.ensure_dirs()
+        self.scraper = JRAScraper(self.config)
+        self.parser = JRAParser(self.config.base_url)
 
     def run(
         self,
@@ -126,6 +148,32 @@ class JRAPipeline:
 
         return final_rows
 
+    def close(self) -> None:
+        self.scraper.close()
+
+    @staticmethod
+    def _write_csv(rows: list[dict[str, str]], output_csv: Path) -> None:
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
+        with output_csv.open("w", encoding="utf-8", newline="") as f:
+            if not rows:
+                return
+            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    @staticmethod
+    def _read_existing_rows(path: Path) -> list[dict[str, str]]:
+        if not path.exists() or path.stat().st_size == 0:
+            return []
+        with path.open("r", encoding="utf-8", newline="") as f:
+            return list(csv.DictReader(f))
+
+    def _load_state(self) -> dict:
+        if not self.config.state_path.exists():
+            return {"processed_race_ids": [], "failures": {}}
+        with self.config.state_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+
     def _save_state(
         self,
         processed_races: set[str],
@@ -142,5 +190,6 @@ class JRAPipeline:
                 "new_rows": new_rows,
             },
         }
+        self.config.state_path.parent.mkdir(parents=True, exist_ok=True)
         with self.config.state_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
