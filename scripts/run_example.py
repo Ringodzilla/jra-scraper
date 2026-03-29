@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -13,24 +15,71 @@ from jra_scraper.config import ScrapeConfig
 from jra_scraper.pipeline import JRAPipeline
 
 
-def main():
-    logging.basicConfig(level=logging.INFO)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run JRA scraper pipeline")
+
+    parser.add_argument(
+        "--config-path",
+        default="config/races.json",
+        help="Race config json path",
+    )
+    parser.add_argument(
+        "--output-path",
+        default="data/processed/race_last5.csv",
+        help="CSV output path",
+    )
+    parser.add_argument(
+        "--state-path",
+        default="data/processed/pipeline_state.json",
+        help="State json path",
+    )
+    parser.add_argument(
+        "--reprocess-raw",
+        action="store_true",
+        help="Parse only cached HTML (no network)",
+    )
+    parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Ignore state and rebuild",
+    )
+    parser.add_argument(
+        "--race-list-path",
+        default="/JRADB/accessS.html",
+        help="Race list relative path",
+    )
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    )
+
+    # config読み込み
+    cfg = json.loads(Path(args.config_path).read_text(encoding="utf-8"))
+    race_urls = [r["source_url"] for r in cfg]
 
     config = ScrapeConfig(
-        output_csv=Path("data/processed/race_last5.csv"),
-        state_path=Path("data/processed/pipeline_state.json"),
+        race_list_path=args.race_list_path,
+        output_csv=Path(args.output_path),
+        state_path=Path(args.state_path),
     )
 
     pipeline = JRAPipeline(config)
 
     try:
         rows = pipeline.run(
-            race_urls=[
-                "https://www.jra.go.jp/JRADB/accessD.html?CNAME=pw01dde0107202601061120260329/50"
-            ]
+            race_urls=race_urls,
+            reprocess_raw=args.reprocess_raw,
+            force_rebuild=args.force_rebuild,
         )
-        logging.info(f"Finished. Rows={len(rows)}")
-
+        logging.info(
+            "Finished. Rows=%d output=%s state=%s",
+            len(rows),
+            config.output_csv,
+            config.state_path,
+        )
     finally:
         pipeline.close()
 

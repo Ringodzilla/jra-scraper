@@ -49,11 +49,13 @@ def validate_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     for group_rows in by_horse.values():
         sorted_rows = sorted(group_rows, key=lambda r: _safe_int(r["run_index"]))
         out.extend(sorted_rows[:5])
+
     return out
 
 
 def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     data = {col: str(row.get(col, "")).strip() for col in OUTPUT_COLUMNS if col != "row_id"}
+
     data["horse_id"] = _normalize_horse_id(data["horse_id"], data["horse_name"])
     data["date"] = _normalize_date(data["date"])
     data["distance"] = _normalize_int(data["distance"])
@@ -65,6 +67,7 @@ def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     data["passing_order"] = _normalize_passing_order(data["passing_order"])
     data["odds"] = _normalize_float(data["odds"])
     data["popularity"] = _normalize_int(data["popularity"])
+
     return data
 
 
@@ -121,7 +124,6 @@ def _normalize_time(value: str) -> str:
 
 
 def _normalize_passing_order(value: str) -> str:
-    # keep 4th-corner by taking last section from 1-2-3-4 patterns
     if not value:
         return ""
     parts = [p for p in re.split(r"[-→]", value) if p.strip()]

@@ -1,102 +1,118 @@
-import pandas as pd
-import numpy as np
+from **future** import annotations
 
-# =========================
-# 設定（調整ポイント）
-# =========================
-WEIGHT_POSITION = 0.5
-WEIGHT_LAST3F = 0.3
-WEIGHT_POPULARITY = 0.2
+import csv
+import math
+from dataclasses import dataclass
+from pathlib import Path
 
-# =========================
-# データ読み込み
-# =========================
-def load_data(path="data/processed/race_last5.csv"):
-    df = pd.read_csv(path)
-    return df
+@dataclass
+class EVWeights:
+position: float = 0.45
+last_3f: float = 0.25
+popularity_gap: float = 0.30
 
-# =========================
-# 前処理
-# =========================
-def preprocess(df):
-    df["position"] = pd.to_numeric(df["position"], errors="coerce")
-    df["last_3f"] = pd.to_numeric(df["last_3f"], errors="coerce")
-    df["popularity"] = pd.to_numeric(df["popularity"], errors="coerce")
+def load_rows(path: Path) -> list[dict[str, str]]:
+with path.open("r", encoding="utf-8", newline="") as f:
+rows = list(csv.DictReader(f))
+return [_sanitize_row(r) for r in rows]
 
-    return df
+def compute_ev(
+rows: list[dict[str, str]],
+weights: EVWeights | None = None,
+) -> list[dict[str, str | None]]:
+weights = weights or EVWeights()
+scored: list[dict[str, str | None]] = []
 
-# =========================
-# 馬ごと集約
-# =========================
-def aggregate_horse(df):
-    grouped = df.groupby("horse_name")
+```
+for row in rows:
+    row = _sanitize_row(row)
 
-    agg = grouped.agg({
-        "position": "mean",
-        "last_3f": "mean",
-        "popularity": "mean",
-    }).reset_index()
+    pos = _to_float(row.get("position"))
+    last3f = _to_float(row.get("last_3f"))
+    pop = _to_float(row.get("popularity"))
+    odds = _to_float(row.get("odds"))
 
-    return agg
+    pos_score = 1.0 / pos if pos else None
+    last3f_score = 1.0 / last3f if last3f else None
+    gap_score = ((pop - 1.0) / pop) if pop else None
 
-# =========================
-# スコア計算
-# =========================
-def calculate_score(df):
-    # 小さいほど良い指標を逆転
-    df["position_score"] = 1 / df["position"]
-    df["last3f_score"] = 1 / df["last_3f"]
-    df["popularity_score"] = 1 / df["popularity"]
-
-    df["score"] = (
-        df["position_score"] * WEIGHT_POSITION +
-        df["last3f_score"] * WEIGHT_LAST3F +
-        df["popularity_score"] * WEIGHT_POPULARITY
+    model_prob = _weighted_mean(
+        [
+            (pos_score, weights.position),
+            (last3f_score, weights.last_3f),
+            (gap_score, weights.popularity_gap),
+        ]
     )
 
-    return df
+    fair_odds = (1.0 / model_prob) if model_prob else None
+    ev = (odds * model_prob) if odds and model_prob else None
 
-# =========================
-# 勝率pに変換（softmax）
-# =========================
-def calculate_probability(df):
-    exp_scores = np.exp(df["score"])
-    df["p"] = exp_scores / exp_scores.sum()
-    return df
+    new_row = dict(row)
+    new_row["model_prob"] = _fmt(model_prob)
+    new_row["fair_odds"] = _fmt(fair_odds)
+    new_row["ev"] = _fmt(ev)
+    scored.append(new_row)
 
-# =========================
-# 仮オッズ（※後で差し替え）
-# =========================
-def attach_dummy_odds(df):
-    df["odds"] = np.linspace(3, 30, len(df))
-    return df
+scored.sort(key=lambda r: _to_float(str(r.get("ev"))) or 0.0, reverse=True)
+return scored
+```
 
-# =========================
-# EV計算
-# =========================
-def calculate_ev(df):
-    df["EV"] = df["p"] * df["odds"]
-    return df
+def save_ev(rows: list[dict[str, str | None]], out_path: Path) -> None:
+out_path.parent.mkdir(parents=True, exist_ok=True)
+if not rows:
+out_path.write_text("", encoding="utf-8")
+return
 
-# =========================
-# 実行
-# =========================
-def run():
-    df = load_data()
-    df = preprocess(df)
-    df = aggregate_horse(df)
-    df = calculate_score(df)
-    df = calculate_probability(df)
-    df = attach_dummy_odds(df)
-    df = calculate_ev(df)
+```
+keys = list(rows[0].keys())
+with out_path.open("w", encoding="utf-8", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=keys)
+    writer.writeheader()
+    writer.writerows(rows)
+```
 
-    df = df.sort_values("EV", ascending=False)
+def _sanitize_row(row: dict[str, str]) -> dict[str, str]:
+out: dict[str, str] = {}
+for k, v in row.items():
+if v in (None, "", "None"):
+out[k] = "0"
+continue
 
-    print("\n=== EVランキング ===")
-    print(df[["horse_name", "p", "odds", "EV"]])
+```
+    f = _to_float(str(v))
+    if f is not None and not math.isfinite(f):
+        out[k] = "0"
+    else:
+        out[k] = str(v)
 
-    return df
+return out
+```
 
+def _weighted_mean(pairs: list[tuple[float | None, float]]) -> float | None:
+total_w = 0.0
+total_v = 0.0
+for value, weight in pairs:
+if value is None:
+continue
+total_v += value * weight
+total_w += weight
 
-if __name__ == "__main__":
-    run()
+```
+if total_w == 0:
+    return None
+
+return total_v / total_w
+```
+
+def _to_float(value: str | None) -> float | None:
+if value in (None, "", "None"):
+return None
+try:
+return float(value)
+except ValueError:
+return None
+
+def _fmt(value: float | None) -> str | None:
+if value is None:
+return None
+return f"{value:.4f}".rstrip("0").rstrip(".")

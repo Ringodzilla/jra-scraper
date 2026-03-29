@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -8,6 +9,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from bs4 import BeautifulSoup
 
 TRACKS = ("札幌", "函館", "福島", "新潟", "東京", "中山", "中京", "京都", "阪神", "小倉")
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -123,6 +125,10 @@ class JRAParser:
             return []
 
         headers = [self._norm(cell.get_text(" ", strip=True)) for cell in table.select("tr th")]
+        for required in ("着順", "上り", "上り3F", "人気"):
+            if required not in headers:
+                logger.warning("Missing expected header '%s' in horse history table", required)
+
         body_rows = [tr for tr in table.select("tr") if tr.select("td")]
 
         out: list[dict[str, str]] = []
