@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -26,8 +27,8 @@ class JRAPipeline:
 
     def run(
         self,
-        race_limit: int = 3,
-        horse_limit: int = 8,
+        race_limit: int | None = None,
+        horse_limit: int | None = None,
         *,
         race_urls: list[str] | None = None,
         reprocess_raw: bool = False,
@@ -53,11 +54,12 @@ class JRAPipeline:
         # 🔥 race_urls対応
         if race_urls:
             races = []
-            for idx, race_url in enumerate(race_urls, start=1):
+            for race_url in race_urls:
+                race_id = self._build_direct_race_id(race_url)
                 races.append(
                     RaceLink(
-                        race_id=f"direct_{idx:03d}",
-                        race_name=f"direct_race_{idx}",
+                        race_id=race_id,
+                        race_name=f"direct_race_{race_id[:8]}",
                         race_url=race_url,
                     )
                 )
@@ -75,12 +77,24 @@ class JRAPipeline:
                 self._save_state(processed_races, failures, 0, 0)
                 return existing_rows
 
-            races = self.parser.parse_race_list(race_list_html)[:race_limit]
+            races = self.parser.parse_race_list(race_list_html)
+            if race_limit is not None:
+                races = races[:race_limit]
             logger.info("Parsed races=%d", len(races))
 
         for race in races:
-            if race.race_id in processed_races and not force_rebuild:
-                logger.info("Skip already processed race: %s", race.race_id)
+            if force_rebuild:
+                logger.info(
+                    "Rebuild mode active, process race regardless of state race_id=%s force_rebuild=%s",
+                    race.race_id,
+                    force_rebuild,
+                )
+            elif race.race_id in processed_races:
+                logger.info(
+                    "Skip already processed race race_id=%s force_rebuild=%s",
+                    race.race_id,
+                    force_rebuild,
+                )
                 continue
 
             race_html = self.scraper.fetch(
@@ -96,7 +110,9 @@ class JRAPipeline:
 
             horses = self.parser.parse_race_detail(
                 race_html, race.race_id, race.race_name
-            )[:horse_limit]
+            )
+            if horse_limit is not None:
+                horses = horses[:horse_limit]
             logger.info("Race=%s horses=%d", race.race_id, len(horses))
 
             race_rows = []
@@ -129,6 +145,12 @@ class JRAPipeline:
             if not race_failed:
                 processed_races.add(race.race_id)
                 processed_this_run.append(race.race_id)
+                logger.info(
+                    "Processed race race_id=%s force_rebuild=%s rows=%d",
+                    race.race_id,
+                    force_rebuild,
+                    len(race_rows),
+                )
 
         final_rows = validate_rows(existing_rows + all_new_rows)
         self._write_csv(final_rows, self.config.output_csv)
@@ -193,3 +215,7 @@ class JRAPipeline:
         self.config.state_path.parent.mkdir(parents=True, exist_ok=True)
         with self.config.state_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _build_direct_race_id(race_url: str) -> str:
+        return hashlib.md5(race_url.encode("utf-8")).hexdigest()
