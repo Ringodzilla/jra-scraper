@@ -48,6 +48,18 @@ def main() -> None:
         default="/JRADB/accessS.html",
         help="Race list relative path",
     )
+    parser.add_argument(
+        "--race-limit",
+        type=int,
+        default=None,
+        help="Max races to process (default: no limit)",
+    )
+    parser.add_argument(
+        "--horse-limit",
+        type=int,
+        default=None,
+        help="Max horses per race (default: no limit)",
+    )
 
     args = parser.parse_args()
 
@@ -70,6 +82,8 @@ def main() -> None:
 
     try:
         rows = pipeline.run(
+            race_limit=args.race_limit,
+            horse_limit=args.horse_limit,
             race_urls=race_urls,
             reprocess_raw=args.reprocess_raw,
             force_rebuild=args.force_rebuild,

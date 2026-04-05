@@ -5,6 +5,9 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
+LAST_3F_NEUTRAL_BASELINE = 36.0
+LAST_3F_FALLBACK_WEIGHT_RATIO = 0.4
+
 
 @dataclass
 class EVWeights:
@@ -33,6 +36,9 @@ def compute_ev(
         last3f = _to_float(row.get("last_3f"))
         pop = _to_float(row.get("popularity"))
         odds = _to_float(row.get("odds"))
+        last3f_weight = weights.last_3f
+        if last3f is not None and abs(last3f - LAST_3F_NEUTRAL_BASELINE) < 1e-9:
+            last3f_weight *= LAST_3F_FALLBACK_WEIGHT_RATIO
 
         pos_score = 1.0 / pos if pos else None
         last3f_score = 1.0 / last3f if last3f else None
@@ -41,7 +47,7 @@ def compute_ev(
         model_prob = _weighted_mean(
             [
                 (pos_score, weights.position),
-                (last3f_score, weights.last_3f),
+                (last3f_score, last3f_weight),
                 (gap_score, weights.popularity_gap),
             ]
         )

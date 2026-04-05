@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,13 +28,25 @@ def load_race_configs(path: Path) -> list[dict]:
     return configs
 
 
-def run_analysis_phase(race_configs: list[dict]) -> dict:
+def run_analysis_phase(
+    race_configs: list[dict],
+    *,
+    race_urls: list[str] | None = None,
+    force_rebuild: bool = False,
+    race_limit: int | None = None,
+    horse_limit: int | None = None,
+) -> dict:
     logging.info("analysis phase started")
-    race_urls = [cfg["source_url"] for cfg in race_configs]
+    urls = race_urls or [cfg["source_url"] for cfg in race_configs]
 
     pipeline = JRAPipeline(ScrapeConfig())
     try:
-        pipeline.run(race_urls=race_urls)
+        pipeline.run(
+            race_urls=urls,
+            force_rebuild=force_rebuild,
+            race_limit=race_limit,
+            horse_limit=horse_limit,
+        )
     finally:
         pipeline.close()
 
@@ -69,10 +82,47 @@ def run_analysis_phase(race_configs: list[dict]) -> dict:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Run JRA analysis pipeline")
+    parser.add_argument(
+        "--config-path",
+        default=str(ROOT / "config/races.json"),
+        help="Race config json path",
+    )
+    parser.add_argument(
+        "--race-url",
+        action="append",
+        default=None,
+        help="Direct race URL. Can be repeated.",
+    )
+    parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Ignore processed state and rebuild races",
+    )
+    parser.add_argument(
+        "--race-limit",
+        type=int,
+        default=None,
+        help="Max races to process (default: no limit)",
+    )
+    parser.add_argument(
+        "--horse-limit",
+        type=int,
+        default=None,
+        help="Max horses per race (default: no limit)",
+    )
+    args = parser.parse_args()
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    cfg_path = ROOT / "config/races.json"
+    cfg_path = Path(args.config_path)
     race_configs = load_race_configs(cfg_path)
-    payload = run_analysis_phase(race_configs)
+    payload = run_analysis_phase(
+        race_configs,
+        race_urls=args.race_url,
+        force_rebuild=args.force_rebuild,
+        race_limit=args.race_limit,
+        horse_limit=args.horse_limit,
+    )
     logging.info("outputs ready: %s", payload)
 
 
