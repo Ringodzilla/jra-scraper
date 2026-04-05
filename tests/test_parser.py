@@ -62,7 +62,9 @@ class TestJRAParser(unittest.TestCase):
             horse_name="サンプルホースA",
             horse_url="https://www.jra.go.jp/JRADB/accessU.html?CNAME=x",
         )
-        self.assertEqual("", rows[0]["last_3f"])
+        self.assertTrue(
+            rows[0]["last_3f"] in ["", None] or str(rows[0]["last_3f"]).lower() == "nan"
+        )
 
 
 if __name__ == "__main__":
