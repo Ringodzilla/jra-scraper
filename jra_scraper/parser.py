@@ -97,31 +97,11 @@ class JRAParser:
     def parse_race_detail(self, html: str, race_id: str, race_name: str) -> list[HorseEntry]:
         soup = BeautifulSoup(html, "html.parser")
         horses: list[HorseEntry] = []
-
-        for selector in self.HORSE_ANCHOR_SELECTORS:
-            for anchor in soup.select(selector):
-                href = anchor.get("href") or ""
-                horse_name = " ".join(anchor.get_text(" ", strip=True).split())
-                if not href or not horse_name:
-                    continue
-                if not self._looks_like_horse_link(href, horse_name):
-                    continue
-                horses.append(
-                    HorseEntry(
-                        race_id=race_id,
-                        race_name=race_name,
-                        horse_id=self._extract_horse_id(href, horse_name),
-                        horse_name=horse_name,
-                        horse_url=urljoin(self.base_url, href),
-                    )
-                )
-
-        if not horses:
-            for row in soup.select("table tr"):
-                tds = row.select("td")
-                if len(tds) < 3:
-                    continue
-                anchor = tds[2].select_one("a[href]")
+        race_table = soup.select_one("table.race_table_01")
+        if race_table:
+            rows = race_table.select("tbody tr") or race_table.select("tr")
+            for row in rows:
+                anchor = row.select_one("a[href]")
                 if not anchor:
                     continue
                 href = anchor.get("href") or ""
@@ -137,7 +117,11 @@ class JRAParser:
                         horse_url=urljoin(self.base_url, href),
                     )
                 )
-        return self._dedupe_horses(horses)
+
+        horses = self._dedupe_horses(horses)
+        if len(horses) == 0:
+            raise ValueError("No horses parsed — selector broken")
+        return horses
 
     def parse_horse_last5(
         self,
