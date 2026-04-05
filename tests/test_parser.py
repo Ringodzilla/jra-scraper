@@ -49,7 +49,6 @@ class TestJRAParser(unittest.TestCase):
         self.assertIn("popularity", rows[0])
 
     def test_parse_horse_last5_keeps_missing_last3f_as_empty(self):
-        # missing last_3f is kept empty (no synthetic fallback fill)
         html = """
         <table>
           <tr><th>日付</th><th>レース名</th><th>距離</th><th>着順</th><th>人気</th></tr>
