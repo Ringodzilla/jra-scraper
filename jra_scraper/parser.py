@@ -286,7 +286,7 @@ class JRAParser:
             "weight": "",
             "jockey": "",
             "pace": "",
-            "last_3f": "",
+            "last_3f": None,
             "track_condition": "",
             "weather": "",
             "passing_order": "",
