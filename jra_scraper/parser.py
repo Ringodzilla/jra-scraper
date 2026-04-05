@@ -37,6 +37,7 @@ class HeaderMatch:
 
 class JRAParser:
     """Parser tuned for JRA/JRADB style HTML pages."""
+    LAST_3F_NEUTRAL_BASELINE = "36.0"
 
     RACE_ANCHOR_SELECTORS = (
         'a[href*="/JRADB/accessD.html"]',
@@ -176,6 +177,12 @@ class JRAParser:
                 continue
 
             mapped = self._map_row(header_matches, values)
+            self._apply_last_3f_fallback(
+                mapped,
+                horse_name=horse_name,
+                race_id=race_id,
+                run_index=run_idx,
+            )
             mapped.update(
                 {
                     "race_id": race_id,
@@ -189,6 +196,25 @@ class JRAParser:
             out.append(mapped)
 
         return out
+
+    def _apply_last_3f_fallback(
+        self,
+        row: dict[str, str],
+        *,
+        horse_name: str,
+        race_id: str,
+        run_index: int,
+    ) -> None:
+        if row.get("last_3f"):
+            return
+        row["last_3f"] = self.LAST_3F_NEUTRAL_BASELINE
+        logger.warning(
+            "Missing last_3f -> fallback baseline applied horse=%s race_id=%s run_index=%s last_3f=%s",
+            horse_name,
+            race_id,
+            run_index,
+            row["last_3f"],
+        )
 
     def _select_last5_table(self, soup: BeautifulSoup):
         best_table = None
