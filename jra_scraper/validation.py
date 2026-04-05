@@ -34,6 +34,7 @@ OUTPUT_COLUMNS = [
     "pace",
     "last_3f",
     "passing_order",
+    "corner_4",
     "track_condition",
     "weather",
     "odds",
@@ -91,6 +92,7 @@ def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     data["pace"] = parse_pace(data["pace"])
     data["last_3f"] = parse_last3f(data["last_3f"])
     data["passing_order"] = parse_passing_order(data["passing_order"])
+    data["corner_4"] = data["passing_order"]
     data["odds"] = _normalize_float(data["odds"])
     data["popularity"] = _normalize_int(data["popularity"])
     data["last3f_rank"] = _normalize_int(data.get("last3f_rank", ""))
@@ -504,3 +506,33 @@ def _safe_int(value: str) -> int:
         return int(value)
     except ValueError:
         return 999
+
+
+def build_race_info_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    if not rows:
+        return []
+    race_info: dict[str, dict[str, str]] = {}
+    for row in rows:
+        race_id = row.get("race_id", "")
+        if not race_id:
+            continue
+        if race_id not in race_info:
+            race_info[race_id] = {
+                "race_id": race_id,
+                "date": row.get("date", ""),
+                "race_name": row.get("race_name", ""),
+                "course": row.get("course", ""),
+                "distance": row.get("distance", ""),
+                "field_size": row.get("field_size", ""),
+                "race_pace": row.get("race_pace", ""),
+                "pace_maker_flag": row.get("pace_maker_flag", ""),
+                "track_condition": row.get("track_condition", ""),
+                "weather": row.get("weather", ""),
+            }
+            continue
+        current = race_info[race_id]
+        for key in ("field_size", "race_pace", "pace_maker_flag", "track_condition", "weather"):
+            if not current.get(key) and row.get(key):
+                current[key] = row[key]
+
+    return [race_info[k] for k in sorted(race_info.keys())]

@@ -1,6 +1,6 @@
 import unittest
 
-from jra_scraper.validation import OUTPUT_COLUMNS, build_row_id, validate_rows
+from jra_scraper.validation import OUTPUT_COLUMNS, build_race_info_rows, build_row_id, validate_rows
 
 
 class TestValidation(unittest.TestCase):
@@ -46,6 +46,7 @@ class TestValidation(unittest.TestCase):
         self.assertEqual("36", validated[0]["pace"])
         self.assertEqual("34.2", validated[0]["last_3f"])
         self.assertEqual("2", validated[0]["passing_order"])
+        self.assertEqual("2", validated[0]["corner_4"])
         self.assertEqual("3.2", validated[0]["odds"])
         self.assertEqual("1", validated[0]["popularity"])
         self.assertEqual("1", validated[0]["last3f_rank"])
@@ -74,6 +75,39 @@ class TestValidation(unittest.TestCase):
             "odds": "3.2",
         }
         self.assertEqual(build_row_id(row), build_row_id(row.copy()))
+
+    def test_build_race_info_rows_by_race_id(self):
+        rows = [
+            {
+                "race_id": "r1",
+                "date": "2026-03-01",
+                "race_name": "弥生賞",
+                "course": "芝",
+                "distance": "2000",
+                "field_size": "18",
+                "race_pace": "mid",
+                "pace_maker_flag": "0",
+                "track_condition": "良",
+                "weather": "晴",
+            },
+            {
+                "race_id": "r1",
+                "date": "2026-03-01",
+                "race_name": "弥生賞",
+                "course": "芝",
+                "distance": "2000",
+                "field_size": "",
+                "race_pace": "",
+                "pace_maker_flag": "",
+                "track_condition": "",
+                "weather": "",
+            },
+        ]
+        info = build_race_info_rows(rows)
+        self.assertEqual(1, len(info))
+        self.assertEqual("r1", info[0]["race_id"])
+        self.assertEqual("18", info[0]["field_size"])
+        self.assertEqual("mid", info[0]["race_pace"])
 
 
 if __name__ == "__main__":

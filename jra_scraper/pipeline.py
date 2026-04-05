@@ -10,7 +10,7 @@ from pathlib import Path
 from .config import ScrapeConfig
 from .parser import JRAParser, RaceLink
 from .scraper import JRAScraper, safe_filename
-from .validation import validate_rows
+from .validation import build_race_info_rows, validate_rows
 
 
 logger = logging.getLogger(__name__)
@@ -156,6 +156,8 @@ class JRAPipeline:
 
         final_rows = validate_rows(existing_rows + all_new_rows)
         self._write_csv(final_rows, self.config.output_csv)
+        race_info_rows = build_race_info_rows(final_rows)
+        self._write_csv(race_info_rows, self.config.race_info_csv)
         self._save_state(
             processed_races,
             failures,
