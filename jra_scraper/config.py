@@ -10,6 +10,7 @@ class ScrapeConfig:
     race_list_path: str = "/JRADB/accessS.html"
 
     output_csv: Path = Path("data/processed/race_last5.csv")
+    race_info_csv: Path = Path("data/processed/race_info.csv")
     raw_dir: Path = Path("data/raw")
     state_path: Path = Path("data/processed/pipeline_state.json")
 
@@ -20,4 +21,5 @@ class ScrapeConfig:
     def ensure_dirs(self) -> None:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.output_csv.parent.mkdir(parents=True, exist_ok=True)
+        self.race_info_csv.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)

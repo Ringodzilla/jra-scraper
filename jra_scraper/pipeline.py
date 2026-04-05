@@ -10,7 +10,7 @@ from pathlib import Path
 from .config import ScrapeConfig
 from .parser import JRAParser, RaceLink
 from .scraper import JRAScraper, safe_filename
-from .validation import validate_rows
+from .validation import build_race_info_rows, validate_rows
 
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,7 @@ class JRAPipeline:
             if horse_limit is not None:
                 horses = horses[:horse_limit]
             logger.info("Race=%s horses=%d", race.race_id, len(horses))
+            field_size = str(len(horses))
 
             race_rows = []
             race_failed = False
@@ -137,6 +138,7 @@ class JRAPipeline:
                     horse_id=horse.horse_id,
                     horse_name=horse.horse_name,
                     horse_url=horse.horse_url,
+                    field_size=field_size,
                 )
                 race_rows.extend(rows)
 
@@ -154,6 +156,8 @@ class JRAPipeline:
 
         final_rows = validate_rows(existing_rows + all_new_rows)
         self._write_csv(final_rows, self.config.output_csv)
+        race_info_rows = build_race_info_rows(final_rows)
+        self._write_csv(race_info_rows, self.config.race_info_csv)
         self._save_state(
             processed_races,
             failures,

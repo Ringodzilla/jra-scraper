@@ -48,7 +48,7 @@ class TestJRAParser(unittest.TestCase):
         self.assertIn("odds", rows[0])
         self.assertIn("popularity", rows[0])
 
-    def test_parse_horse_last5_fills_last3f_fallback_when_missing(self):
+    def test_parse_horse_last5_keeps_missing_last3f_as_empty(self):
         html = """
         <table>
           <tr><th>日付</th><th>レース名</th><th>距離</th><th>着順</th><th>人気</th></tr>
@@ -62,7 +62,10 @@ class TestJRAParser(unittest.TestCase):
             horse_name="サンプルホースA",
             horse_url="https://www.jra.go.jp/JRADB/accessU.html?CNAME=x",
         )
-        self.assertEqual("36.0", rows[0]["last_3f"])
+
+        self.assertTrue(
+            rows[0]["last_3f"] in ["", None] or str(rows[0]["last_3f"]).lower() == "nan"
+        )
 
 
 if __name__ == "__main__":

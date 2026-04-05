@@ -58,6 +58,7 @@ class JRAParser:
         "race_name": ("レース名", "レース", "競走名", "前走"),
         "position": ("着順", "着", "4走前"),
         "time": ("タイム", "走破タイム"),
+        "margin": ("着差",),
         "weight": ("斤量",),
         "jockey": ("騎手", "騎手名"),
         "distance": ("距離", "前々走", "3走前"),
@@ -146,6 +147,7 @@ class JRAParser:
         horse_id: str,
         horse_name: str,
         horse_url: str,
+        field_size: str = "",
     ) -> list[dict[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
         table = self._select_last5_table(soup)
@@ -188,6 +190,7 @@ class JRAParser:
                     "horse_name": horse_name,
                     "horse_url": horse_url,
                     "run_index": str(run_idx),
+                    "field_size": field_size,
                 }
             )
             out.append(mapped)
@@ -305,10 +308,11 @@ class JRAParser:
             "distance": "",
             "position": "",
             "time": "",
+            "margin": "",
             "weight": "",
             "jockey": "",
             "pace": "",
-            "last_3f": "",
+            "last_3f": None,
             "track_condition": "",
             "weather": "",
             "passing_order": "",
