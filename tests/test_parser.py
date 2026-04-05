@@ -29,6 +29,11 @@ class TestJRAParser(unittest.TestCase):
         self.assertEqual("サンプルホースA", horses[0].horse_name)
         self.assertTrue(horses[0].horse_id)
 
+    def test_parse_race_detail_raises_when_no_horses_found(self):
+        html = "<html><body><table class='race_table_01'><tr><th>馬名</th></tr></table></body></html>"
+        with self.assertRaisesRegex(ValueError, "No horses parsed"):
+            self.parser.parse_race_detail(html, race_id="r1", race_name="11R")
+
     def test_parse_horse_last5_maps_structured_columns(self):
         html = (FIX / "horse_history.html").read_text(encoding="utf-8")
         rows = self.parser.parse_horse_last5(
