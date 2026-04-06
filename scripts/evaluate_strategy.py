@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -45,6 +46,14 @@ def _max_drawdown(pnls: list[float]) -> float:
     return mdd
 
 
+def _current_git_commit() -> str:
+    try:
+        out = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True)
+        return out.strip()
+    except Exception:
+        return "unknown"
+
+
 def decide_keep_or_revert(before: dict[str, float | int], after: dict[str, float | int]) -> tuple[str, str]:
     """
     Primary metric first:
@@ -72,7 +81,7 @@ def evaluate_strategy(
     min_ev: float = 1.05,
     max_bets_per_race: int = 2,
     stake_per_bet: int = 100,
-) -> dict[str, float | int]:
+) -> dict[str, float | int | str]:
     scored = compute_ev(rows)
 
     grouped: dict[str, list[dict[str, str | None]]] = defaultdict(list)
@@ -142,6 +151,7 @@ def evaluate_strategy(
         "race_count": race_count,
         "invested": invested,
         "returned": returned,
+        "git_commit": _current_git_commit(),
     }
 
 
@@ -182,6 +192,8 @@ def main() -> None:
             "experiment_id": args.experiment_id
             or datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S"),
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "git_commit_before": before.get("git_commit", "unknown"),
+            "git_commit_after": metrics.get("git_commit", "unknown"),
             "hypothesis": args.hypothesis,
             "files_changed": _parse_files_changed(args.files_changed),
             "before": before,

@@ -30,11 +30,17 @@ This runbook defines how to run one-patch-at-a-time strategy optimization safely
 3. Re-run:
    - `HYPOTHESIS="..." FILES_CHANGED="analysis/ev.py" bash scripts/run_codex_experiment.sh <input_csv>`
 4. Read decision in `experiments/<experiment_id>.json`.
+5. Confirm leakage check passed (`scripts/check_feature_leakage.py`).
 
 ## Keep / Revert rule
 - Primary: validation ROI (`validation_roi`)
 - Secondary: score (only as tie-break when ROI is equal)
 - If validation ROI decreases, revert even if score increases.
+
+## Baseline policy
+- Baseline is the latest *kept* result (normally from main or previous keep).
+- Keep decision updates `report/baseline_eval.json`.
+- Revert decision never updates baseline.
 
 ## Pre-merge checklist
 - [ ] One conceptual change only

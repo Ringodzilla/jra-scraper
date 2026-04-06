@@ -36,6 +36,7 @@ def test_evaluate_strategy_returns_metrics() -> None:
     assert metrics["ticket_count"] >= 1
     assert metrics["invested"] >= 100
     assert "validation_roi" in metrics
+    assert "git_commit" in metrics
 
 
 def test_evaluate_strategy_handles_empty_input() -> None:
@@ -52,3 +53,11 @@ def test_decision_prefers_validation_roi() -> None:
 
     assert decision == "revert"
     assert "ROI" in reason
+
+
+def test_decision_keeps_on_roi_tie_and_score_gain() -> None:
+    before = {"validation_roi": 1.10, "score": 0.50}
+    after = {"validation_roi": 1.10, "score": 0.55}
+    decision, _ = decide_keep_or_revert(before, after)
+
+    assert decision == "keep"

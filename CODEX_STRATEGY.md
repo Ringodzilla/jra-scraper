@@ -69,3 +69,8 @@ You are not a horse-race predictor. You are an optimizer of a horse-race betting
 - Primary decision metric is `validation ROI`.
 - Secondary metrics (`max drawdown`, `ticket count`, `hit rate`, composite `score`) are support signals.
 - If `validation ROI` decreases, revert the patch even if composite score improves.
+
+
+## Data leakage guard
+- Run `python scripts/check_feature_leakage.py` before each candidate evaluation.
+- If leakage check fails, do not run evaluation until fixed.
