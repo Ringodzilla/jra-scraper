@@ -42,6 +42,18 @@ This runbook defines how to run one-patch-at-a-time strategy optimization safely
 - Keep decision updates `report/baseline_eval.json`.
 - Revert decision never updates baseline.
 
+
+## Multi-agent operation
+- Follow `MULTI_AGENT_SYSTEM_PROMPT.md` and keep roles separated.
+- Initialize per-experiment role artifacts with:
+  - `bash scripts/init_multi_agent_experiment.sh <experiment_id>`
+- Store role outputs in:
+  - `experiments/<id>/01_researcher.md`
+  - `experiments/<id>/02_planner.md`
+  - `experiments/<id>/03_implementer.md`
+  - `experiments/<id>/04_reviewer.md`
+- If reviewer verdict is NG, re-implement using reviewer instructions only.
+
 ## Pre-merge checklist
 - [ ] One conceptual change only
 - [ ] `PYTHONPATH=. pytest -q` passed

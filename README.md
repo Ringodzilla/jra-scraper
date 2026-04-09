@@ -113,6 +113,14 @@ keep の場合は `report/baseline_eval.json` を更新し、revert の場合は
 
 運用詳細は `RUNBOOK.md` を参照してください。
 
+
+### Multi-agent workflow
+
+- System prompt: `MULTI_AGENT_SYSTEM_PROMPT.md`
+- Initialize experiment role templates:
+  - `bash scripts/init_multi_agent_experiment.sh 2026-04-09_001`
+- Keep role outputs and ownership lock under `experiments/<id>/`.
+
 ## Existing scripts
 
 * `scripts/run_example.py`: スクレイプ実行例

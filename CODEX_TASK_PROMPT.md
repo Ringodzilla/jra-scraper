@@ -28,3 +28,12 @@ Focus areas in priority order:
 
 Do exactly one conceptual improvement per patch.
 Use diffs that are easy to review.
+
+
+Role execution order:
+1. Researcher
+2. Planner
+3. Implementer
+4. Reviewer
+
+Do not merge roles in one output.
