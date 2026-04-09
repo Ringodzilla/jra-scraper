@@ -60,3 +60,15 @@ This runbook defines how to run one-patch-at-a-time strategy optimization safely
 - [ ] Baseline and candidate metrics recorded
 - [ ] Decision log written to `experiments/`
 - [ ] Overfitting / leakage risk reviewed
+
+
+## Worktree isolation
+- Initialize role worktrees:
+  - `bash scripts/setup_worktrees.sh ..`
+- researcher/planner/reviewer are read-only roles.
+- implementer edits only in implementer worktree.
+- avoid same-file edits across role worktrees.
+
+## Orchestrator
+- `python scripts/orchestrator.py --task "..."`
+- Output files are written to `experiments/orchestrator_latest/`.

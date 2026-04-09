@@ -121,6 +121,18 @@ keep の場合は `report/baseline_eval.json` を更新し、revert の場合は
   - `bash scripts/init_multi_agent_experiment.sh 2026-04-09_001`
 - Keep role outputs and ownership lock under `experiments/<id>/`.
 
+
+### Subagents + worktree + orchestrator
+
+- Agent profiles: `agents/researcher.md`, `agents/planner.md`, `agents/implementer.md`, `agents/reviewer.md`
+- Local routing guide: `AGENTS.md`
+- Worktree setup:
+  - `bash scripts/setup_worktrees.sh ..`
+- Role orchestration (Agent SDK):
+  - `python scripts/orchestrator.py --task "ログインバグを修正したい"`
+
+運用ルールとして、reviewer が `NG` を返した場合のみ implementer を再実行します。
+
 ## Existing scripts
 
 * `scripts/run_example.py`: スクレイプ実行例
