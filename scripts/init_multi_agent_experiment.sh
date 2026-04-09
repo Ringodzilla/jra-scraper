@@ -7,48 +7,55 @@ EXP_DIR="${ROOT_DIR}/experiments/${EXP_ID}"
 
 mkdir -p "${EXP_DIR}"
 
-cat > "${EXP_DIR}/01_researcher.md" <<'MD'
-# Researcher Report
+cat > "${EXP_DIR}/01_data_collector.json" <<'JSON'
+{
+  "race_info": {},
+  "horses": []
+}
+JSON
 
-- Related files:
-- Current implementation:
-- Impact scope:
-- Risks:
-- Unknowns:
-- Hypothesis (tentative):
-MD
+cat > "${EXP_DIR}/02_analyzer.json" <<'JSON'
+{
+  "scores": []
+}
+JSON
 
-cat > "${EXP_DIR}/02_planner.md" <<'MD'
-# Planner Report
+cat > "${EXP_DIR}/03_simulator.json" <<'JSON'
+{
+  "probabilities": []
+}
+JSON
 
-- Tasks:
-- Completion criteria per task:
-- Test criteria:
-- Prohibited actions:
-MD
+cat > "${EXP_DIR}/04_ev_calculator.json" <<'JSON'
+{
+  "ev_table": []
+}
+JSON
 
-cat > "${EXP_DIR}/03_implementer.md" <<'MD'
-# Implementer Report
+cat > "${EXP_DIR}/05_bet_builder.json" <<'JSON'
+{
+  "core": [],
+  "partner": [],
+  "long": [],
+  "tickets": []
+}
+JSON
 
-- Changes made:
-- Commands executed:
-- Test results:
-- Unresolved items:
-MD
-
-cat > "${EXP_DIR}/04_reviewer.md" <<'MD'
-# Reviewer Report
-
-- Verdict (OK/NG):
-- Reasons:
-- Required fixes (if NG):
-MD
+cat > "${EXP_DIR}/06_reviewer.json" <<'JSON'
+{
+  "status": "OK",
+  "reason": "",
+  "fix": ""
+}
+JSON
 
 cat > "${EXP_DIR}/OWNERSHIP.lock" <<'TXT'
 # Declare files each role touched to avoid concurrent overlap.
-researcher:
-planner:
-implementer:
+data_collector:
+analyzer:
+simulator:
+ev_calculator:
+bet_builder:
 reviewer:
 TXT
 

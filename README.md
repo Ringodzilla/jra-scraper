@@ -124,14 +124,14 @@ keep の場合は `report/baseline_eval.json` を更新し、revert の場合は
 
 ### Subagents + worktree + orchestrator
 
-- Agent profiles: `agents/researcher.md`, `agents/planner.md`, `agents/implementer.md`, `agents/reviewer.md`
+- Agent profiles: `agents/data_collector.md`, `agents/analyzer.md`, `agents/simulator.md`, `agents/ev_calculator.md`, `agents/bet_builder.md`, `agents/reviewer.md`
 - Local routing guide: `AGENTS.md`
 - Worktree setup:
   - `bash scripts/setup_worktrees.sh ..`
 - Role orchestration (Agent SDK):
-  - `python scripts/orchestrator.py --task "ログインバグを修正したい"`
+  - `python scripts/orchestrator.py --race "中山11R 皐月賞"`
 
-運用ルールとして、reviewer が `NG` を返した場合のみ implementer を再実行します。
+運用ルールとして、reviewer が `NG` を返した場合のみ bet_builder を reviewer指示で再実行します。
 
 ## Existing scripts
 

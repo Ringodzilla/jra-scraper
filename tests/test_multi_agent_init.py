@@ -18,10 +18,12 @@ def test_init_multi_agent_experiment_creates_templates(tmp_path: Path) -> None:
         cwd=root,
     )
 
-    assert (exp_dir / "01_researcher.md").exists()
-    assert (exp_dir / "02_planner.md").exists()
-    assert (exp_dir / "03_implementer.md").exists()
-    assert (exp_dir / "04_reviewer.md").exists()
+    assert (exp_dir / "01_data_collector.json").exists()
+    assert (exp_dir / "02_analyzer.json").exists()
+    assert (exp_dir / "03_simulator.json").exists()
+    assert (exp_dir / "04_ev_calculator.json").exists()
+    assert (exp_dir / "05_bet_builder.json").exists()
+    assert (exp_dir / "06_reviewer.json").exists()
     assert (exp_dir / "OWNERSHIP.lock").exists()
 
     for f in exp_dir.glob("*"):

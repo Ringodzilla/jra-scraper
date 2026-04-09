@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from openai import OpenAI
@@ -18,46 +19,58 @@ class CodexOrchestrator:
         )
         return response.output_text
 
-    def execute(self, task: str, max_retries: int = 1) -> dict[str, str]:
-        research = self.run("researcher", task)
-        plan = self.run("planner", research)
-        impl = self.run("implementer", plan)
-        review = self.run("reviewer", impl)
+    @staticmethod
+    def _is_ng(review_text: str) -> bool:
+        try:
+            data = json.loads(review_text)
+            return str(data.get("status", "")).upper() == "NG"
+        except json.JSONDecodeError:
+            return "NG" in review_text.upper()
+
+    def execute(self, race_context: str, max_retries: int = 1) -> dict[str, str]:
+        data = self.run("data_collector", race_context)
+        analysis = self.run("analyzer", data)
+        sim = self.run("simulator", analysis)
+        ev = self.run("ev_calculator", sim)
+        bet = self.run("bet_builder", ev)
+        review = self.run("reviewer", bet)
 
         retries = 0
-        while "NG" in review and retries < max_retries:
-            impl = self.run("implementer", review)
-            review = self.run("reviewer", impl)
+        while self._is_ng(review) and retries < max_retries:
+            bet = self.run("bet_builder", review)
+            review = self.run("reviewer", bet)
             retries += 1
 
         return {
-            "research": research,
-            "plan": plan,
-            "implementation": impl,
-            "review": review,
+            "data_collector": data,
+            "analyzer": analysis,
+            "simulator": sim,
+            "ev_calculator": ev,
+            "bet_builder": bet,
+            "reviewer": review,
         }
 
 
 def _write_outputs(out_dir: Path, outputs: dict[str, str]) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for key, value in outputs.items():
-        (out_dir / f"{key}.md").write_text(value, encoding="utf-8")
+        (out_dir / f"{key}.json").write_text(value, encoding="utf-8")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run role-separated Codex orchestration.")
-    parser.add_argument("--task", required=True, help="Task request for the agent team")
+    parser = argparse.ArgumentParser(description="Run role-separated horse-racing Codex orchestration.")
+    parser.add_argument("--race", required=True, help="Race/task context for the multi-agent system")
     parser.add_argument("--model", default="gpt-5-codex")
     parser.add_argument("--out-dir", default="experiments/orchestrator_latest")
     parser.add_argument("--max-retries", type=int, default=1)
     args = parser.parse_args()
 
     orchestrator = CodexOrchestrator(model=args.model)
-    outputs = orchestrator.execute(task=args.task, max_retries=args.max_retries)
+    outputs = orchestrator.execute(race_context=args.race, max_retries=args.max_retries)
     _write_outputs(Path(args.out_dir), outputs)
 
     print("==== FINAL RESULT ====")
-    print(outputs["review"])
+    print(outputs["reviewer"])
 
 
 if __name__ == "__main__":

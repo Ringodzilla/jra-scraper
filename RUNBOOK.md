@@ -48,10 +48,12 @@ This runbook defines how to run one-patch-at-a-time strategy optimization safely
 - Initialize per-experiment role artifacts with:
   - `bash scripts/init_multi_agent_experiment.sh <experiment_id>`
 - Store role outputs in:
-  - `experiments/<id>/01_researcher.md`
-  - `experiments/<id>/02_planner.md`
-  - `experiments/<id>/03_implementer.md`
-  - `experiments/<id>/04_reviewer.md`
+  - `experiments/<id>/01_data_collector.json`
+  - `experiments/<id>/02_analyzer.json`
+  - `experiments/<id>/03_simulator.json`
+  - `experiments/<id>/04_ev_calculator.json`
+  - `experiments/<id>/05_bet_builder.json`
+  - `experiments/<id>/06_reviewer.json`
 - If reviewer verdict is NG, re-implement using reviewer instructions only.
 
 ## Pre-merge checklist
@@ -65,10 +67,10 @@ This runbook defines how to run one-patch-at-a-time strategy optimization safely
 ## Worktree isolation
 - Initialize role worktrees:
   - `bash scripts/setup_worktrees.sh ..`
-- researcher/planner/reviewer are read-only roles.
-- implementer edits only in implementer worktree.
+- data_collector/analyzer/simulator/ev_calculator/reviewer are read-only roles.
+- bet_builder role is the only writable decision stage during reruns.
 - avoid same-file edits across role worktrees.
 
 ## Orchestrator
-- `python scripts/orchestrator.py --task "..."`
+- `python scripts/orchestrator.py --race "..."`
 - Output files are written to `experiments/orchestrator_latest/`.

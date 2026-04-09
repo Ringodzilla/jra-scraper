@@ -31,9 +31,11 @@ Use diffs that are easy to review.
 
 
 Role execution order:
-1. Researcher
-2. Planner
-3. Implementer
-4. Reviewer
+1. data_collector
+2. analyzer
+3. simulator
+4. ev_calculator
+5. bet_builder
+6. reviewer
 
 Do not merge roles in one output.
