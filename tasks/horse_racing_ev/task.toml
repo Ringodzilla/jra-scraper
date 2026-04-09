@@ -1,0 +1,8 @@
+name = "horse_racing_ev"
+description = "Evaluate a horse-racing EV betting agent by ROI-focused reward."
+
+[instruction]
+path = "instruction.md"
+
+[tests]
+command = "bash tests/test.sh"

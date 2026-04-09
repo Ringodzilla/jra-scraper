@@ -86,6 +86,53 @@ python scripts/publish_note.py
 * 分析フェーズと投稿フェーズを分離しています
 * このリポジトリでは安全のため実投稿は行わず、`report/publish_preview.txt` を生成する dry-run 実装です
 
+
+## Codex optimization loop (fixed-eval workflow)
+
+Codex に改善を回させる場合は、以下を固定して運用します。
+
+- 憲法ファイル: `CODEX_STRATEGY.md`
+- 実行プロンプト雛形: `CODEX_TASK_PROMPT.md`
+- 固定評価: `python scripts/evaluate_strategy.py --input data/processed/race_last5.csv`
+
+評価スクリプトは **変更しない前提** で、戦略ロジック側（特徴量・閾値・資金配分）のみを小さな差分で改善してください。
+
+
+### Keep/revert automation
+
+- 初回（baseline作成）:
+  - `bash scripts/run_codex_experiment.sh data/processed/race_last5.csv`
+- 変更後（候補評価 + keep/revert判定）:
+  - `HYPOTHESIS="..." FILES_CHANGED="analysis/ev.py" bash scripts/run_codex_experiment.sh data/processed/race_last5.csv`
+
+判定結果は `experiments/*.json` に保存され、**validation ROI を主指標**として keep/revert を決定します。
+
+このスクリプトは実行時に `scripts/check_feature_leakage.py` を呼び、`result` / `payout` / `future_*` などのリーク疑いキーワードを事前検査します。
+
+keep の場合は `report/baseline_eval.json` を更新し、revert の場合は baseline を維持します。
+
+運用詳細は `RUNBOOK.md` を参照してください。
+
+
+### Multi-agent workflow
+
+- System prompt: `MULTI_AGENT_SYSTEM_PROMPT.md`
+- Initialize experiment role templates:
+  - `bash scripts/init_multi_agent_experiment.sh 2026-04-09_001`
+- Keep role outputs and ownership lock under `experiments/<id>/`.
+
+
+### Subagents + worktree + orchestrator
+
+- Agent profiles: `agents/data_collector.md`, `agents/analyzer.md`, `agents/simulator.md`, `agents/ev_calculator.md`, `agents/bet_builder.md`, `agents/reviewer.md`
+- Local routing guide: `AGENTS.md`
+- Worktree setup:
+  - `bash scripts/setup_worktrees.sh ..`
+- Role orchestration (Agent SDK):
+  - `python scripts/orchestrator.py --race "中山11R 皐月賞"`
+
+運用ルールとして、reviewer が `NG` を返した場合のみ bet_builder を reviewer指示で再実行します。
+
 ## Existing scripts
 
 * `scripts/run_example.py`: スクレイプ実行例
