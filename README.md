@@ -1,7 +1,7 @@
-# JRA Race Data Scraper / EV Pipeline
+# jra-ev-agent
 
 JRAのレースデータを取得し、**EVモデリングに直接使える整形済みCSV**を生成し、
-さらに **買い目生成** と **note投稿準備** まで再現可能に実行する継続運用向けパイプラインです。
+さらに **買い目生成** と **note投稿準備** まで再現可能に実行する継続運用向けの `jra-ev-agent` です。
 
 ## Config-driven execution
 

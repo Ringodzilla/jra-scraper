@@ -16,7 +16,7 @@ from jra_scraper.pipeline import JRAPipeline
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run JRA scraper pipeline")
+    parser = argparse.ArgumentParser(description="Run the jra-ev-agent data collection pipeline")
 
     parser.add_argument(
         "--config-path",

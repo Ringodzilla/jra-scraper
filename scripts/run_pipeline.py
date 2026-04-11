@@ -93,7 +93,7 @@ def run_analysis_phase(
     write_note(note_path, note)
 
     payload = {
-        "title": race_configs[0]["note_title"] if race_configs else "JRA EV Analysis",
+        "title": race_configs[0]["note_title"] if race_configs else "jra-ev-agent analysis",
         "tags": race_configs[0]["note_tags"] if race_configs else ["競馬", "EV", "JRA"],
         "slug": race_configs[0]["output_slug"] if race_configs else "jra-ev-analysis",
         "race_name": primary_race_name,

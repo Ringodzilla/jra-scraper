@@ -1,4 +1,4 @@
-"""JRA race data scraper package."""
+"""Core package for the jra-ev-agent project."""
 
 __all__ = ["__version__"]
 __version__ = "0.3.0"
