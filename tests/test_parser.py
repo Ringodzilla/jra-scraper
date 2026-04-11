@@ -28,6 +28,24 @@ class TestJRAParser(unittest.TestCase):
         self.assertEqual(2, len(horses))
         self.assertEqual("サンプルホースA", horses[0].horse_name)
         self.assertTrue(horses[0].horse_id)
+        self.assertEqual("1", horses[0].horse_number)
+
+    def test_parse_race_detail_repairs_shifted_rows(self):
+        html = """
+        <html><body>
+        <table class="race_table_01">
+          <tr><th>枠</th><th>馬番</th><th>馬名</th><th>騎手</th><th>斤量</th><th>単勝</th></tr>
+          <tr><td>1</td><td>1</td><td class="horse"><a href="/JRADB/accessU.html?CNAME=a1">サンプルホースA</a></td><td>戸崎</td><td>57.0</td><td>3.2</td></tr>
+          <tr><td>1</td><td>2</td><td class="horse"><a href="/JRADB/accessU.html?CNAME=a2">サンプル</a></td><td>ホースB</td><td>ルメール</td><td>56</td><td>4.8</td></tr>
+        </table>
+        </body></html>
+        """
+        horses = self.parser.parse_race_detail(html, race_id="20260329_中山_11", race_name="11R")
+        self.assertEqual(2, len(horses))
+        self.assertEqual("サンプル ホースB", horses[1].horse_name)
+        self.assertEqual("2", horses[1].horse_number)
+        self.assertEqual("ルメール", horses[1].current_jockey)
+        self.assertEqual("4.8", horses[1].current_odds)
 
     def test_parse_race_detail_raises_when_no_horses_found(self):
         html = "<html><body><table class='race_table_01'><tr><th>馬名</th></tr></table></body></html>"

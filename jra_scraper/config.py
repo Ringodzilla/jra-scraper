@@ -10,8 +10,12 @@ class ScrapeConfig:
     race_list_path: str = "/JRADB/accessS.html"
 
     output_csv: Path = Path("data/processed/race_last5.csv")
+    entries_csv: Path = Path("data/processed/race_entries.csv")
+    odds_snapshots_csv: Path = Path("data/processed/live_odds_snapshots.csv")
     raw_dir: Path = Path("data/raw")
     state_path: Path = Path("data/processed/pipeline_state.json")
+    quality_report_path: Path = Path("report/data_quality.json")
+    stages_dir: Path = Path("report/stages")
 
     timeout: int = 20
     max_retries: int = 3
@@ -20,4 +24,8 @@ class ScrapeConfig:
     def ensure_dirs(self) -> None:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.output_csv.parent.mkdir(parents=True, exist_ok=True)
+        self.entries_csv.parent.mkdir(parents=True, exist_ok=True)
+        self.odds_snapshots_csv.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.quality_report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.stages_dir.mkdir(parents=True, exist_ok=True)

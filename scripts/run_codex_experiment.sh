@@ -5,6 +5,20 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BASELINE_JSON="${ROOT_DIR}/report/baseline_eval.json"
 CANDIDATE_JSON="${ROOT_DIR}/report/candidate_eval.json"
 INPUT_PATH="${1:-${ROOT_DIR}/data/processed/race_last5.csv}"
+RESULTS_PATH="${RESULTS_PATH:-}"
+
+if [[ -z "${RESULTS_PATH}" ]]; then
+  if [[ -f "$(dirname "${INPUT_PATH}")/results.csv" ]]; then
+    RESULTS_PATH="$(dirname "${INPUT_PATH}")/results.csv"
+  elif [[ -f "${ROOT_DIR}/tasks/horse_racing_ev/files/valid/results.csv" ]]; then
+    RESULTS_PATH="${ROOT_DIR}/tasks/horse_racing_ev/files/valid/results.csv"
+  fi
+fi
+
+RESULTS_ARGS=()
+if [[ -n "${RESULTS_PATH}" ]]; then
+  RESULTS_ARGS=(--results "${RESULTS_PATH}")
+fi
 
 mkdir -p "${ROOT_DIR}/report" "${ROOT_DIR}/experiments"
 
@@ -15,6 +29,7 @@ if [[ ! -f "${BASELINE_JSON}" ]]; then
   echo "[1/4] baseline evaluation"
   python "${ROOT_DIR}/scripts/evaluate_strategy.py" \
     --input "${INPUT_PATH}" \
+    "${RESULTS_ARGS[@]}" \
     --out "${BASELINE_JSON}"
   echo "Baseline created at ${BASELINE_JSON}. Apply your patch, then rerun this script."
   exit 0
@@ -23,6 +38,7 @@ fi
 echo "[1/4] candidate evaluation"
 EVAL_OUTPUT=$(python "${ROOT_DIR}/scripts/evaluate_strategy.py" \
   --input "${INPUT_PATH}" \
+  "${RESULTS_ARGS[@]}" \
   --out "${CANDIDATE_JSON}" \
   --baseline-json "${BASELINE_JSON}" \
   --experiment-id "$(date -u +%Y-%m-%d_%H%M%S)" \

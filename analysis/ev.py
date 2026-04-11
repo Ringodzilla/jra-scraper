@@ -1,127 +1,180 @@
 from __future__ import annotations
 
 import csv
-import math
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-LAST_3F_NEUTRAL_BASELINE = 36.0
-LAST_3F_FALLBACK_WEIGHT_RATIO = 0.4
+from src.feature_engineering import build_feature_row, summarize_history_rows, summarize_live_odds_rows
+from src.model import ModelWeights, estimate_win_probs
 
 
 @dataclass
 class EVWeights:
-    position: float = 0.45
-    last_3f: float = 0.25
-    popularity_gap: float = 0.30
+    ability: float = 0.42
+    course: float = 0.14
+    pace: float = 0.16
+    weight: float = 0.08
+    jockey: float = 0.08
+    market: float = 0.12
+    temperature: float = 1.15
+    market_shrink: float = 0.25
+
+    def to_model_weights(self) -> ModelWeights:
+        return ModelWeights(
+            ability=self.ability,
+            course=self.course,
+            pace=self.pace,
+            weight=self.weight,
+            jockey=self.jockey,
+            market=self.market,
+            temperature=self.temperature,
+            market_shrink=self.market_shrink,
+        )
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8", newline="") as f:
-        rows = list(csv.DictReader(f))
-    return [_sanitize_row(r) for r in rows]
+    with path.open("r", encoding="utf-8", newline="") as file_obj:
+        return list(csv.DictReader(file_obj))
+
+
+def build_feature_rows(
+    rows: list[dict[str, str]],
+    *,
+    odds_snapshots: list[dict[str, str]] | None = None,
+) -> list[dict[str, object]]:
+    if not rows:
+        return []
+
+    normalized_rows: list[dict[str, str]] = []
+    for idx, row in enumerate(rows, start=1):
+        normalized = dict(row)
+        normalized.setdefault("race_id", str(row.get("race_id") or "race_default"))
+        normalized.setdefault("horse_id", str(row.get("horse_id") or row.get("horse_name") or f"horse_{idx}"))
+        normalized.setdefault("horse_name", str(row.get("horse_name") or normalized["horse_id"]))
+        normalized.setdefault("current_odds", str(row.get("current_odds") or row.get("odds") or ""))
+        normalized.setdefault("current_jockey", str(row.get("current_jockey") or row.get("jockey") or ""))
+        normalized.setdefault("assigned_weight", str(row.get("assigned_weight") or row.get("weight") or ""))
+        normalized.setdefault("run_index", str(row.get("run_index") or "1"))
+        normalized_rows.append(normalized)
+
+    grouped_rows: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+    for row in normalized_rows:
+        grouped_rows[(str(row.get("race_id", "")).strip(), str(row.get("horse_id", "")).strip())].append(row)
+
+    summaries = summarize_history_rows(normalized_rows, group_keys=("race_id", "horse_id"))
+    live_summaries = summarize_live_odds_rows(odds_snapshots or [])
+    feature_rows: list[dict[str, object]] = []
+    for key in sorted(grouped_rows.keys()):
+        current_rows = grouped_rows[key]
+        current = sorted(current_rows, key=lambda item: _safe_int(item.get("run_index", "")))[0]
+        summary = summaries[key]
+        live_summary = live_summaries.get(
+            (
+                str(current.get("race_id", "")).strip(),
+                str(current.get("horse_number", "")).strip(),
+            ),
+            {},
+        )
+        feature_rows.append(build_feature_row(current, summary, live_summary=live_summary))
+
+    return feature_rows
+
+
+def simulate_race_scenarios(feature_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    by_race: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in feature_rows:
+        by_race[str(row["race_id"])].append(dict(row))
+
+    simulated: list[dict[str, object]] = []
+    for race_id in sorted(by_race.keys()):
+        race_rows = by_race[race_id]
+        front_density = sum(_to_float(row.get("front_rate"), 0.5) for row in race_rows) / max(len(race_rows), 1)
+        high = _clamp(0.18 + max(0.0, front_density - 0.48) * 1.2, 0.15, 0.55)
+        slow = _clamp(0.18 + max(0.0, 0.42 - front_density) * 1.2, 0.15, 0.55)
+        mid = max(0.10, 1.0 - high - slow)
+        total = high + mid + slow
+        high /= total
+        mid /= total
+        slow /= total
+
+        for row in race_rows:
+            front_rate = _to_float(row.get("front_rate"), 0.5)
+            closing_strength = _to_float(row.get("closing_strength"), 0.0)
+            ability_score = _to_float(row.get("ability_score"), 0.0)
+            course_score = _to_float(row.get("course_score"), 0.0)
+            consistency = _to_float(row.get("consistency"), 0.5)
+
+            high_fit = _clamp((0.65 * closing_strength) + (0.35 * (1.0 - front_rate)), 0.0, 1.5)
+            mid_fit = _clamp((0.50 * ability_score) + (0.20 * front_rate) + (0.30 * consistency), 0.0, 1.5)
+            slow_fit = _clamp((0.55 * front_rate) + (0.30 * course_score) + (0.15 * consistency), 0.0, 1.5)
+            blended_pace = (high * high_fit) + (mid * mid_fit) + (slow * slow_fit)
+
+            row["pace_high"] = _fmt(high_fit)
+            row["pace_mid"] = _fmt(mid_fit)
+            row["pace_slow"] = _fmt(slow_fit)
+            row["pace_mix_high"] = _fmt(high)
+            row["pace_mix_mid"] = _fmt(mid)
+            row["pace_mix_slow"] = _fmt(slow)
+            row["pace_score"] = _fmt(blended_pace)
+            simulated.append(row)
+
+    return simulated
 
 
 def compute_ev(
-    rows: list[dict[str, str]],
+    rows: list[dict[str, str]] | list[dict[str, object]],
     weights: EVWeights | None = None,
-) -> list[dict[str, str | None]]:
+) -> list[dict[str, object]]:
     weights = weights or EVWeights()
-    scored: list[dict[str, str | None]] = []
+    if not rows:
+        return []
 
-    for row in rows:
-        row = _sanitize_row(row)
+    feature_rows: list[dict[str, object]]
+    first_row = rows[0]
+    if "ability_score" in first_row:
+        feature_rows = [dict(row) for row in rows]  # type: ignore[arg-type]
+    else:
+        feature_rows = build_feature_rows(rows)  # type: ignore[arg-type]
 
-        pos = _to_float(row.get("position"))
-        last3f = _to_float(row.get("last_3f"))
-        pop = _to_float(row.get("popularity"))
-        odds = _to_float(row.get("odds"))
-        last3f_weight = weights.last_3f
-        if last3f is not None and abs(last3f - LAST_3F_NEUTRAL_BASELINE) < 1e-9:
-            last3f_weight *= LAST_3F_FALLBACK_WEIGHT_RATIO
+    if "pace_mix_high" not in feature_rows[0]:
+        feature_rows = simulate_race_scenarios(feature_rows)
 
-        pos_score = 1.0 / pos if pos else None
-        last3f_score = 1.0 / last3f if last3f else None
-        gap_score = ((pop - 1.0) / pop) if pop else None
-
-        model_prob = _weighted_mean(
-            [
-                (pos_score, weights.position),
-                (last3f_score, last3f_weight),
-                (gap_score, weights.popularity_gap),
-            ]
-        )
-
-        fair_odds = (1.0 / model_prob) if model_prob else None
-        ev = (odds * model_prob) if odds and model_prob else None
-
-        new_row = dict(row)
-        new_row["model_prob"] = _fmt(model_prob)
-        new_row["fair_odds"] = _fmt(fair_odds)
-        new_row["ev"] = _fmt(ev)
-        scored.append(new_row)
-
-    scored.sort(key=lambda r: _to_float(str(r.get("ev"))) or 0.0, reverse=True)
-    return scored
+    return estimate_win_probs(feature_rows, weights=weights.to_model_weights())
 
 
-def save_ev(rows: list[dict[str, str | None]], out_path: Path) -> None:
+def save_ev(rows: list[dict[str, object]], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
     if not rows:
         out_path.write_text("", encoding="utf-8")
         return
 
     keys = list(rows[0].keys())
-    with out_path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=keys)
+    with out_path.open("w", encoding="utf-8", newline="") as file_obj:
+        writer = csv.DictWriter(file_obj, fieldnames=keys)
         writer.writeheader()
         writer.writerows(rows)
 
 
-def _sanitize_row(row: dict[str, str]) -> dict[str, str]:
-    out: dict[str, str] = {}
-
-    for k, v in row.items():
-        if v in (None, "", "None"):
-            out[k] = "0"
-            continue
-
-        f = _to_float(str(v))
-        if f is not None and not math.isfinite(f):
-            out[k] = "0"
-        else:
-            out[k] = str(v)
-
-    return out
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
 
 
-def _weighted_mean(pairs: list[tuple[float | None, float]]) -> float | None:
-    total_w = 0.0
-    total_v = 0.0
-
-    for value, weight in pairs:
-        if value is None:
-            continue
-        total_v += value * weight
-        total_w += weight
-
-    if total_w == 0:
-        return None
-
-    return total_v / total_w
+def _fmt(value: float) -> str:
+    return f"{value:.6f}".rstrip("0").rstrip(".")
 
 
-def _to_float(value: str | None) -> float | None:
+def _safe_int(value: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 999
+
+
+def _to_float(value: object, default: float = 0.0) -> float:
     if value in (None, "", "None"):
-        return None
+        return default
     try:
         return float(value)
-    except ValueError:
-        return None
-
-
-def _fmt(value: float | None) -> str | None:
-    if value is None:
-        return None
-    return f"{value:.4f}".rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        return default

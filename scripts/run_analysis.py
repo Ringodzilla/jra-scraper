@@ -15,7 +15,7 @@ from strategy.betting import generate_tickets
 def main() -> None:
     in_csv = Path("data/processed/race_last5.csv")
     ev_csv = Path("data/processed/race_ev.csv")
-    note_md = Path("data/processed/note.md")
+    note_md = Path("report/note.md")
 
     rows = load_rows(in_csv)
     scored = compute_ev(rows)
