@@ -70,7 +70,7 @@ def main() -> None:
 
     # config読み込み
     cfg = json.loads(Path(args.config_path).read_text(encoding="utf-8"))
-    race_urls = [r["source_url"] for r in cfg]
+    race_specs = list(cfg)
 
     config = ScrapeConfig(
         race_list_path=args.race_list_path,
@@ -84,7 +84,7 @@ def main() -> None:
         rows = pipeline.run(
             race_limit=args.race_limit,
             horse_limit=args.horse_limit,
-            race_urls=race_urls,
+            race_specs=race_specs,
             reprocess_raw=args.reprocess_raw,
             force_rebuild=args.force_rebuild,
         )

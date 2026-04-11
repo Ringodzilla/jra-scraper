@@ -10,6 +10,17 @@ OUTPUT_COLUMNS = [
     "race_id",
     "horse_id",
     "horse_name",
+    "frame_number",
+    "horse_number",
+    "current_jockey",
+    "assigned_weight",
+    "current_odds",
+    "current_popularity",
+    "target_track",
+    "target_race_date",
+    "target_race_number",
+    "target_surface",
+    "target_distance",
     "run_index",
     "date",
     "race_name",
@@ -26,6 +37,24 @@ OUTPUT_COLUMNS = [
     "passing_order",
     "odds",
     "popularity",
+]
+
+ENTRY_COLUMNS = [
+    "race_id",
+    "horse_id",
+    "horse_name",
+    "frame_number",
+    "horse_number",
+    "current_jockey",
+    "assigned_weight",
+    "current_odds",
+    "current_popularity",
+    "target_track",
+    "target_race_date",
+    "target_race_number",
+    "target_surface",
+    "target_distance",
+    "history_count",
 ]
 
 
@@ -46,17 +75,63 @@ def validate_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
         by_horse[(row["race_id"], row["horse_id"] or row["horse_name"])].append(row)
 
     out: list[dict[str, str]] = []
-    for group_rows in by_horse.values():
+    for key in sorted(by_horse.keys()):
+        group_rows = by_horse[key]
         sorted_rows = sorted(group_rows, key=lambda r: _safe_int(r["run_index"]))
         out.extend(sorted_rows[:5])
 
     return out
 
 
+def build_entry_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        grouped[(row["race_id"], row["horse_id"] or row["horse_name"])].append(row)
+
+    entries: list[dict[str, str]] = []
+    for key in sorted(grouped.keys()):
+        group_rows = sorted(grouped[key], key=lambda r: _safe_int(r["run_index"]))
+        first = group_rows[0]
+        entries.append(
+            {
+                "race_id": first["race_id"],
+                "horse_id": first["horse_id"],
+                "horse_name": first["horse_name"],
+                "frame_number": first["frame_number"],
+                "horse_number": first["horse_number"],
+                "current_jockey": first["current_jockey"],
+                "assigned_weight": first["assigned_weight"],
+                "current_odds": first["current_odds"],
+                "current_popularity": first["current_popularity"],
+                "target_track": first["target_track"],
+                "target_race_date": first["target_race_date"],
+                "target_race_number": first["target_race_number"],
+                "target_surface": first["target_surface"],
+                "target_distance": first["target_distance"],
+                "history_count": str(len(group_rows)),
+            }
+        )
+    return entries
+
+
+def build_row_id(row: dict[str, str]) -> str:
+    stable_keys = ["race_id", "horse_id", "run_index", "date", "race_name", "position", "odds"]
+    payload = "|".join(str(row.get(key, "")).strip() for key in stable_keys)
+    return f"row_{hashlib.sha1(payload.encode('utf-8')).hexdigest()[:20]}"
+
+
 def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     data = {col: str(row.get(col, "")).strip() for col in OUTPUT_COLUMNS if col != "row_id"}
 
     data["horse_id"] = _normalize_horse_id(data["horse_id"], data["horse_name"])
+    data["frame_number"] = _normalize_int(data["frame_number"])
+    data["horse_number"] = _normalize_int(data["horse_number"])
+    data["assigned_weight"] = _normalize_float(data["assigned_weight"])
+    data["current_odds"] = _normalize_float(data["current_odds"])
+    data["current_popularity"] = _normalize_int(data["current_popularity"])
+    data["target_race_date"] = _normalize_date(data["target_race_date"])
+    data["target_race_number"] = _normalize_int(data["target_race_number"])
+    data["target_distance"] = _normalize_int(data["target_distance"])
     data["date"] = _normalize_date(data["date"])
     data["distance"] = _normalize_int(data["distance"])
     data["position"] = _normalize_int(data["position"])
@@ -69,12 +144,6 @@ def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     data["popularity"] = _normalize_int(data["popularity"])
 
     return data
-
-
-def build_row_id(row: dict[str, str]) -> str:
-    stable_keys = ["race_id", "horse_id", "run_index", "date", "race_name", "position", "odds"]
-    payload = "|".join(str(row.get(k, "")).strip() for k in stable_keys)
-    return f"row_{hashlib.sha1(payload.encode('utf-8')).hexdigest()[:20]}"
 
 
 def _normalize_horse_id(raw_id: str, horse_name: str) -> str:
@@ -98,15 +167,15 @@ def _normalize_date(value: str) -> str:
 
 
 def _normalize_int(value: str) -> str:
-    m = re.search(r"-?\d+", value or "")
-    return m.group(0) if m else ""
+    match = re.search(r"-?\d+", value or "")
+    return match.group(0) if match else ""
 
 
 def _normalize_float(value: str) -> str:
-    m = re.search(r"-?\d+(?:\.\d+)?", value or "")
-    if not m:
+    match = re.search(r"-?\d+(?:\.\d+)?", value or "")
+    if not match:
         return ""
-    return f"{float(m.group(0)):.1f}".rstrip("0").rstrip(".")
+    return f"{float(match.group(0)):.1f}".rstrip("0").rstrip(".")
 
 
 def _normalize_time(value: str) -> str:
@@ -126,7 +195,7 @@ def _normalize_time(value: str) -> str:
 def _normalize_passing_order(value: str) -> str:
     if not value:
         return ""
-    parts = [p for p in re.split(r"[-→]", value) if p.strip()]
+    parts = [part for part in re.split(r"[-→]", value) if part.strip()]
     if not parts:
         return ""
     return _normalize_int(parts[-1])

@@ -4,28 +4,16 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
+from typing import Sequence
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
+from .models import HorseEntry, ParserIssue, RaceLink
+
+
 TRACKS = ("札幌", "函館", "福島", "新潟", "東京", "中山", "中京", "京都", "阪神", "小倉")
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class RaceLink:
-    race_id: str
-    race_name: str
-    race_url: str
-
-
-@dataclass
-class HorseEntry:
-    race_id: str
-    race_name: str
-    horse_id: str
-    horse_name: str
-    horse_url: str
 
 
 @dataclass
@@ -36,7 +24,8 @@ class HeaderMatch:
 
 
 class JRAParser:
-    """Parser tuned for JRA/JRADB style HTML pages."""
+    """Parser tuned for JRA/JRADB style HTML pages with repair-oriented fallbacks."""
+
     LAST_3F_NEUTRAL_BASELINE = "36.0"
 
     RACE_ANCHOR_SELECTORS = (
@@ -45,14 +34,7 @@ class JRAParser:
         'a[href*="pw01dde"]',
     )
 
-    HORSE_ANCHOR_SELECTORS = (
-        "td.horse a[href]",
-        "table tr td:nth-child(3) a[href]",
-        'a[href*="/JRADB/accessU.html"]',
-        'a[href*="/JRADB/accessC.html"]',
-    )
-
-    HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    HISTORY_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "date": ("日付", "年月日"),
         "course": ("開催", "競馬場", "場"),
         "race_name": ("レース名", "レース", "競走名", "前走"),
@@ -70,7 +52,18 @@ class JRAParser:
         "popularity": ("人気",),
     }
 
-    REQUIRED_CANONICAL_HEADERS = ("position", "last_3f", "popularity")
+    ENTRY_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+        "frame_number": ("枠", "枠番"),
+        "horse_number": ("馬番", "馬番号"),
+        "horse_name": ("馬名", "馬"),
+        "sex_age": ("性齢", "性/齢"),
+        "assigned_weight": ("斤量", "負担重量"),
+        "current_jockey": ("騎手", "騎手名"),
+        "current_odds": ("単勝", "単勝オッズ", "オッズ"),
+        "current_popularity": ("人気",),
+    }
+
+    REQUIRED_HISTORY_HEADERS = ("position", "last_3f", "popularity")
 
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url
@@ -85,38 +78,103 @@ class JRAParser:
                 race_name = " ".join(anchor.get_text(" ", strip=True).split())
                 if not href or not race_name:
                     continue
+                race_id = self._build_race_id(href, race_name)
+                date, track, race_number = self._parse_race_id_components(race_id)
                 links.append(
                     RaceLink(
-                        race_id=self._build_race_id(href, race_name),
+                        race_id=race_id,
                         race_name=race_name,
                         race_url=urljoin(self.base_url, href),
+                        race_date=date,
+                        track=track,
+                        race_number=race_number,
                     )
                 )
         return self._dedupe_races(links)
 
-    def parse_race_detail(self, html: str, race_id: str, race_name: str) -> list[HorseEntry]:
+    def parse_race_detail(
+        self,
+        html: str,
+        race_id: str,
+        race_name: str,
+        *,
+        issue_sink: list[ParserIssue] | None = None,
+        aggressive_repair: bool = False,
+    ) -> list[HorseEntry]:
         soup = BeautifulSoup(html, "html.parser")
+        table = self._select_entry_table(soup)
+        if table is None:
+            self._issue(
+                issue_sink,
+                stage="parser.race_detail",
+                severity="high",
+                code="entry_table_missing",
+                message="Could not find race entry table.",
+                context={"race_id": race_id, "race_name": race_name},
+            )
+            raise ValueError("No horses parsed — selector broken")
+
+        headers = self._extract_headers(table)
+        matches = self._build_header_matches(headers, self.ENTRY_HEADER_ALIASES)
+        entry_canonicals = {match.canonical for match in matches}
+        rows = [tr for tr in table.select("tr") if tr.select("td")]
+        target_date, target_track, target_race_number = self._parse_race_id_components(race_id)
+        target_surface, target_distance = self._extract_race_conditions(soup)
+
         horses: list[HorseEntry] = []
-        race_table = soup.select_one("table.race_table_01")
-        if race_table:
-            rows = race_table.select("tbody tr") or race_table.select("tr")
-            for row in rows:
-                anchor = row.select_one("a[href]")
-                if not anchor:
-                    continue
-                href = anchor.get("href") or ""
-                horse_name = " ".join(anchor.get_text(" ", strip=True).split())
-                if not href or not horse_name:
-                    continue
-                horses.append(
-                    HorseEntry(
-                        race_id=race_id,
-                        race_name=race_name,
-                        horse_id=self._extract_horse_id(href, horse_name),
-                        horse_name=horse_name,
-                        horse_url=urljoin(self.base_url, href),
-                    )
+        for row_index, row in enumerate(rows, start=1):
+            raw_cells = [self._norm(td.get_text(" ", strip=True)) for td in row.select("td")]
+            cells = self._repair_cells(
+                raw_cells,
+                len(headers),
+                matches,
+                issue_sink,
+                context={"race_id": race_id, "row_index": str(row_index)},
+                aggressive=aggressive_repair,
+            )
+            mapped = self._map_row(matches, cells)
+            mapped = self._apply_entry_fallbacks(
+                mapped,
+                row,
+                raw_cells,
+                aggressive_repair,
+                allow_odds_fallback=("current_odds" in entry_canonicals),
+            )
+
+            anchor = row.select_one("a[href]")
+            href = anchor.get("href") if anchor else ""
+            horse_name = mapped.get("horse_name") or (self._norm(anchor.get_text(" ", strip=True)) if anchor else "")
+            if not href or not horse_name:
+                self._issue(
+                    issue_sink,
+                    stage="parser.race_detail",
+                    severity="medium",
+                    code="entry_row_incomplete",
+                    message="Skipped race entry row because horse link or horse name was missing.",
+                    context={"race_id": race_id, "row_index": str(row_index)},
                 )
+                continue
+
+            horses.append(
+                HorseEntry(
+                    race_id=race_id,
+                    race_name=race_name,
+                    horse_id=self._extract_horse_id(href, horse_name),
+                    horse_name=horse_name,
+                    horse_url=urljoin(self.base_url, href),
+                    frame_number=mapped.get("frame_number", ""),
+                    horse_number=mapped.get("horse_number", ""),
+                    current_jockey=mapped.get("current_jockey", ""),
+                    assigned_weight=mapped.get("assigned_weight", ""),
+                    current_odds=mapped.get("current_odds", ""),
+                    current_popularity=mapped.get("current_popularity", ""),
+                    target_track=target_track,
+                    target_race_date=target_date,
+                    target_race_number=target_race_number,
+                    target_surface=target_surface,
+                    target_distance=target_distance,
+                )
+            )
 
         horses = self._dedupe_horses(horses)
         if len(horses) == 0:
@@ -130,72 +188,121 @@ class JRAParser:
         horse_id: str,
         horse_name: str,
         horse_url: str,
+        *,
+        current_entry: HorseEntry | None = None,
+        issue_sink: list[ParserIssue] | None = None,
+        aggressive_repair: bool = False,
     ) -> list[dict[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
         table = self._select_last5_table(soup)
         if table is None:
+            self._issue(
+                issue_sink,
+                stage="parser.horse_history",
+                severity="high",
+                code="history_table_missing",
+                message="Could not find a horse history table.",
+                context={"race_id": race_id, "horse_id": horse_id, "horse_name": horse_name},
+            )
             logger.warning("No suitable last5 table found for horse=%s url=%s", horse_name, horse_url)
             return []
 
         headers = self._extract_headers(table)
-        header_matches = self._build_header_matches(headers)
+        header_matches = self._build_header_matches(headers, self.HISTORY_HEADER_ALIASES)
 
         found_canonicals = {m.canonical for m in header_matches}
-        for required in self.REQUIRED_CANONICAL_HEADERS:
+        for required in self.REQUIRED_HISTORY_HEADERS:
             if required not in found_canonicals:
-                logger.warning(
-                    "Missing expected canonical header '%s' in horse history table for horse=%s raw_headers=%s",
-                    required,
-                    horse_name,
-                    headers,
+                self._issue(
+                    issue_sink,
+                    stage="parser.horse_history",
+                    severity="medium",
+                    code="history_header_missing",
+                    message=f"Missing expected history header: {required}",
+                    context={"race_id": race_id, "horse_id": horse_id, "horse_name": horse_name},
                 )
 
         body_rows = [tr for tr in table.select("tr") if tr.select("td")]
-
         out: list[dict[str, str]] = []
+
         for run_idx, tr in enumerate(body_rows[:5], start=1):
-            values = [self._norm(td.get_text(" ", strip=True)) for td in tr.select("td")]
-            if not any(values):
+            raw_cells = [self._norm(td.get_text(" ", strip=True)) for td in tr.select("td")]
+            cells = self._repair_cells(
+                raw_cells,
+                len(headers),
+                header_matches,
+                issue_sink,
+                context={"race_id": race_id, "horse_id": horse_id, "run_index": str(run_idx)},
+                aggressive=aggressive_repair,
+            )
+            if not any(cells):
                 continue
 
-            mapped = self._map_row(header_matches, values)
+            mapped = self._map_row(header_matches, cells)
             self._apply_last_3f_fallback(
                 mapped,
                 horse_name=horse_name,
                 race_id=race_id,
                 run_index=run_idx,
+                issue_sink=issue_sink,
             )
-            mapped.update(
-                {
-                    "race_id": race_id,
-                    "horse_id": horse_id,
-                    "horse_name": horse_name,
-                    "horse_url": horse_url,
-                    "run_index": str(run_idx),
-                }
-            )
-            out.append(mapped)
+
+            row = {
+                "race_id": race_id,
+                "horse_id": horse_id,
+                "horse_name": horse_name,
+                "horse_url": horse_url,
+                "run_index": str(run_idx),
+                **mapped,
+            }
+            if current_entry is not None:
+                row.update(
+                    {
+                        "frame_number": current_entry.frame_number,
+                        "horse_number": current_entry.horse_number,
+                        "current_jockey": current_entry.current_jockey,
+                        "assigned_weight": current_entry.assigned_weight,
+                        "current_odds": current_entry.current_odds,
+                        "current_popularity": current_entry.current_popularity,
+                        "target_track": current_entry.target_track,
+                        "target_race_date": current_entry.target_race_date,
+                        "target_race_number": current_entry.target_race_number,
+                        "target_surface": current_entry.target_surface,
+                        "target_distance": current_entry.target_distance,
+                    }
+                )
+            out.append(row)
 
         return out
 
-    def _apply_last_3f_fallback(
-        self,
-        row: dict[str, str],
-        *,
-        horse_name: str,
-        race_id: str,
-        run_index: int,
-    ) -> None:
-        if row.get("last_3f"):
-            return
-        row["last_3f"] = self.LAST_3F_NEUTRAL_BASELINE
-        logger.warning(
-            "Missing last_3f -> fallback baseline applied horse=%s race_id=%s run_index=%s last_3f=%s",
-            horse_name,
-            race_id,
-            run_index,
-            row["last_3f"],
-        )
+    def _select_entry_table(self, soup: BeautifulSoup):
+        best_table = None
+        best_score = -1
+        for table in soup.select("table"):
+            score = 0
+            headers = self._extract_headers(table)
+            if headers:
+                matches = self._build_header_matches(headers, self.ENTRY_HEADER_ALIASES)
+                canonicals = {m.canonical for m in matches}
+                if "horse_name" in canonicals:
+                    score += 4
+                if "horse_number" in canonicals:
+                    score += 3
+                if "frame_number" in canonicals:
+                    score += 2
+                if "current_jockey" in canonicals:
+                    score += 1
+                if "current_odds" in canonicals:
+                    score += 1
+            anchors = table.select("a[href]")
+            if anchors:
+                score += min(len(anchors), 5)
+            if table.select_one("td.horse"):
+                score += 3
+            if score > best_score:
+                best_score = score
+                best_table = table
+        return best_table
 
     def _select_last5_table(self, soup: BeautifulSoup):
         best_table = None
@@ -206,7 +313,7 @@ class JRAParser:
             if not headers:
                 continue
 
-            matches = self._build_header_matches(headers)
+            matches = self._build_header_matches(headers, self.HISTORY_HEADER_ALIASES)
             canonicals = {m.canonical for m in matches}
             score = 0
 
@@ -252,97 +359,202 @@ class JRAParser:
             non_empty = [v for v in values if v]
             if len(non_empty) >= 3:
                 return values
-
         return []
 
-    def _build_header_matches(self, headers: list[str]) -> list[HeaderMatch]:
+    def _build_header_matches(
+        self,
+        headers: Sequence[str],
+        aliases_map: dict[str, tuple[str, ...]],
+    ) -> list[HeaderMatch]:
         matches: list[HeaderMatch] = []
         for idx, raw_header in enumerate(headers):
-            canonical = self._canonicalize_header(raw_header)
+            canonical = self._canonicalize_header(raw_header, aliases_map)
             if canonical:
                 matches.append(HeaderMatch(index=idx, canonical=canonical, raw=raw_header))
         return matches
 
-    def _canonicalize_header(self, header: str) -> str | None:
+    def _canonicalize_header(
+        self,
+        header: str,
+        aliases_map: dict[str, tuple[str, ...]],
+    ) -> str | None:
         normalized = self._normalize_header_label(header)
-        for canonical, aliases in self.HEADER_ALIASES.items():
+        for canonical, aliases in aliases_map.items():
             alias_norms = {self._normalize_header_label(a) for a in aliases}
             if normalized in alias_norms:
                 return canonical
         return None
 
-    @staticmethod
-    def _normalize_header_label(value: str) -> str:
-        value = JRAParser._norm(value)
-        value = value.replace(" ", "")
-        value = value.replace("　", "")
-        value = value.replace("Ｆ", "F").replace("３", "3").replace("４", "4")
-        value = value.replace("ｆ", "F").replace("ｆ", "F")
-        return value
+    def _repair_cells(
+        self,
+        cells: list[str],
+        expected_count: int,
+        matches: Sequence[HeaderMatch],
+        issue_sink: list[ParserIssue] | None,
+        *,
+        context: dict[str, str],
+        aggressive: bool,
+    ) -> list[str]:
+        if expected_count <= 0 or len(cells) == expected_count:
+            return cells
+
+        repaired = list(cells)
+        if len(repaired) < expected_count:
+            self._issue(
+                issue_sink,
+                stage="parser.repair",
+                severity="medium",
+                code="row_padding",
+                message="Padded a short row to match header count.",
+                context=context,
+            )
+            repaired.extend([""] * (expected_count - len(repaired)))
+            return repaired
+
+        horse_idx = next((m.index for m in matches if m.canonical == "horse_name"), None)
+        current_jockey_idx = next((m.index for m in matches if m.canonical == "current_jockey"), None)
+        merge_idx = horse_idx if horse_idx is not None else current_jockey_idx
+
+        self._issue(
+            issue_sink,
+            stage="parser.repair",
+            severity="medium",
+            code="row_merge",
+            message="Merged extra cells to repair a shifted row.",
+            context={**context, "before_len": str(len(cells)), "after_len": str(expected_count)},
+        )
+
+        while len(repaired) > expected_count:
+            if merge_idx is not None and merge_idx + 1 < len(repaired):
+                repaired[merge_idx] = " ".join(part for part in (repaired[merge_idx], repaired.pop(merge_idx + 1)) if part).strip()
+            elif aggressive and len(repaired) >= 2:
+                repaired[-2] = " ".join(part for part in (repaired[-2], repaired.pop(-1)) if part).strip()
+            else:
+                repaired.pop()
+        return repaired
 
     @staticmethod
-    def _map_row(header_matches: list[HeaderMatch], values: list[str]) -> dict[str, str]:
-        record = {
-            "date": "",
-            "race_name": "",
-            "course": "",
-            "distance": "",
-            "position": "",
-            "time": "",
-            "weight": "",
-            "jockey": "",
-            "pace": "",
-            "last_3f": "",
-            "track_condition": "",
-            "weather": "",
-            "passing_order": "",
-            "odds": "",
-            "popularity": "",
-        }
-
-        for match in header_matches:
+    def _map_row(matches: Sequence[HeaderMatch], values: Sequence[str]) -> dict[str, str]:
+        record: dict[str, str] = {}
+        for match in matches:
             if match.index >= len(values):
                 continue
             value = values[match.index]
-            if not value:
-                continue
-            record[match.canonical] = value
-
-        # split combined distance field (e.g., 芝2000 / ダ1200)
-        raw_dist = record["distance"]
-        if raw_dist:
-            if not record["course"]:
-                m_course = re.search(r"(芝|ダ|ダート|障害)", raw_dist)
-                if m_course:
-                    record["course"] = "ダート" if m_course.group(1) in ("ダ", "ダート") else m_course.group(1)
-            m_dist = re.search(r"(\d{3,4})", raw_dist)
-            if m_dist:
-                record["distance"] = m_dist.group(1)
-
-        # if course field contains venue text plus surface/distance, salvage surface
-        raw_course = record["course"]
-        if raw_course and raw_course not in ("芝", "ダート", "障害"):
-            m_course = re.search(r"(芝|ダ|ダート|障害)", raw_course)
-            if m_course:
-                record["course"] = "ダート" if m_course.group(1) in ("ダ", "ダート") else m_course.group(1)
-
-        # normalize passing order to last corner if pattern like 12-10-8-5
-        if record["passing_order"]:
-            parts = [p for p in re.split(r"[-→]", record["passing_order"]) if p.strip()]
-            if parts:
-                record["passing_order"] = parts[-1].strip()
-
+            if value:
+                record[match.canonical] = value
         return record
+
+    def _apply_entry_fallbacks(
+        self,
+        mapped: dict[str, str],
+        row,
+        raw_cells: Sequence[str],
+        aggressive_repair: bool,
+        *,
+        allow_odds_fallback: bool,
+    ) -> dict[str, str]:
+        out = dict(mapped)
+        texts = [self._norm(text) for text in raw_cells if self._norm(text)]
+        anchor = row.select_one("a[href]")
+        if anchor and not out.get("horse_name"):
+            out["horse_name"] = self._norm(anchor.get_text(" ", strip=True))
+
+        if not out.get("horse_number"):
+            numbers = [self._normalize_int_like(value) for value in texts]
+            horse_number = next((n for n in numbers if n and 1 <= int(n) <= 18), "")
+            if horse_number:
+                out["horse_number"] = horse_number
+
+        if not out.get("frame_number"):
+            numbers = [self._normalize_int_like(value) for value in texts]
+            frame_number = next((n for n in numbers if n and 1 <= int(n) <= 8), "")
+            if frame_number:
+                out["frame_number"] = frame_number
+
+        if not out.get("current_odds") and (allow_odds_fallback or aggressive_repair):
+            odds_candidates = []
+            for value in texts:
+                normalized = self._normalize_decimal_like(value)
+                if not normalized:
+                    continue
+                if normalized in {out.get("frame_number", ""), out.get("horse_number", ""), out.get("assigned_weight", "")}:
+                    continue
+                if "." not in value and float(normalized) < 2.0:
+                    continue
+                odds_candidates.append(normalized)
+            odds = odds_candidates[0] if odds_candidates else ""
+            if odds:
+                out["current_odds"] = odds
+
+        if not out.get("assigned_weight"):
+            weight = next(
+                (
+                    self._normalize_decimal_like(value)
+                    for value in texts
+                    if self._normalize_decimal_like(value) and 45.0 <= float(self._normalize_decimal_like(value)) <= 65.0
+                ),
+                "",
+            )
+            if weight:
+                out["assigned_weight"] = weight
+
+        if aggressive_repair and not out.get("current_jockey"):
+            for text in texts:
+                if not re.search(r"\d", text) and len(text) <= 8 and text != out.get("horse_name", ""):
+                    out["current_jockey"] = text
+                    break
+
+        return out
+
+    def _apply_last_3f_fallback(
+        self,
+        row: dict[str, str],
+        *,
+        horse_name: str,
+        race_id: str,
+        run_index: int,
+        issue_sink: list[ParserIssue] | None,
+    ) -> None:
+        if row.get("last_3f"):
+            return
+        row["last_3f"] = self.LAST_3F_NEUTRAL_BASELINE
+        self._issue(
+            issue_sink,
+            stage="parser.horse_history",
+            severity="medium",
+            code="last3f_fallback",
+            message="Applied neutral last_3f fallback because the source cell was missing.",
+            context={"race_id": race_id, "horse_name": horse_name, "run_index": str(run_index)},
+        )
+
+    def _extract_race_conditions(self, soup: BeautifulSoup) -> tuple[str, str]:
+        text = soup.get_text(" ", strip=True)
+        match = re.search(r"(芝|ダート|ダ|障害)\s*(\d{3,4})\s*m?", text)
+        if not match:
+            return "", ""
+        surface = match.group(1)
+        if surface == "ダ":
+            surface = "ダート"
+        return surface, match.group(2)
+
+    @staticmethod
+    def _parse_race_id_components(race_id: str) -> tuple[str, str, str]:
+        match = re.match(r"(?P<date>\d{8})_(?P<track>.+)_(?P<number>\d{2})$", race_id)
+        if not match:
+            return "", "", ""
+        raw_date = match.group("date")
+        date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+        return date, match.group("track"), match.group("number")
 
     @staticmethod
     def _build_race_id(href: str, race_name: str) -> str:
         date = ""
-        m = re.search(r"(20\d{6})", href)
-        if m:
-            date = m.group(1)
+        match = re.search(r"(20\d{6})", href)
+        if match:
+            date = match.group(1)
         track = next((t for t in TRACKS if t in race_name), "unknown")
-        m_r = re.search(r"(\d{1,2})R", race_name)
-        race_no = f"{int(m_r.group(1)):02d}" if m_r else "00"
+        race_match = re.search(r"(\d{1,2})R", race_name)
+        race_no = f"{int(race_match.group(1)):02d}" if race_match else "00"
         if date:
             return f"{date}_{track}_{race_no}"
         digest = hashlib.md5((href + race_name).encode("utf-8")).hexdigest()[:10]
@@ -362,13 +574,6 @@ class JRAParser:
         return re.sub(r"[^a-z0-9_\-ぁ-んァ-ヶ一-龠]", "", cleaned) or "unknown_horse"
 
     @staticmethod
-    def _looks_like_horse_link(href: str, name: str) -> bool:
-        lowered = href.lower()
-        if any(token in lowered for token in ("accessu", "horse", "uma", "pw01ude", "pw01uce")):
-            return True
-        return len(name) >= 2 and "詳細" not in name and "オッズ" not in name
-
-    @staticmethod
     def _dedupe_races(items: list[RaceLink]) -> list[RaceLink]:
         seen: set[str] = set()
         out: list[RaceLink] = []
@@ -381,15 +586,57 @@ class JRAParser:
 
     @staticmethod
     def _dedupe_horses(items: list[HorseEntry]) -> list[HorseEntry]:
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         out: list[HorseEntry] = []
         for item in items:
-            if item.horse_url in seen:
+            key = (item.race_id, item.horse_id or item.horse_name)
+            if key in seen:
                 continue
-            seen.add(item.horse_url)
+            seen.add(key)
             out.append(item)
         return out
 
     @staticmethod
+    def _normalize_header_label(value: str) -> str:
+        value = JRAParser._norm(value)
+        value = value.replace(" ", "")
+        value = value.replace("　", "")
+        value = value.replace("Ｆ", "F").replace("３", "3").replace("４", "4")
+        value = value.replace("ｆ", "F")
+        return value
+
+    @staticmethod
+    def _normalize_int_like(value: str) -> str:
+        match = re.search(r"\d+", value)
+        return match.group(0) if match else ""
+
+    @staticmethod
+    def _normalize_decimal_like(value: str) -> str:
+        match = re.search(r"\d+(?:\.\d+)?", value)
+        return match.group(0) if match else ""
+
+    @staticmethod
     def _norm(value: str) -> str:
         return " ".join(value.split())
+
+    @staticmethod
+    def _issue(
+        issue_sink: list[ParserIssue] | None,
+        *,
+        stage: str,
+        severity: str,
+        code: str,
+        message: str,
+        context: dict[str, str],
+    ) -> None:
+        if issue_sink is None:
+            return
+        issue_sink.append(
+            ParserIssue(
+                stage=stage,
+                severity=severity,
+                code=code,
+                message=message,
+                context=context,
+            )
+        )

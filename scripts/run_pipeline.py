@@ -1,28 +1,39 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import sys
-import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from analysis.ev import compute_ev, load_rows, save_ev
+from analysis.ev import save_ev
 from jra_scraper.config import ScrapeConfig
-from jra_scraper.pipeline import JRAPipeline
 from report.note import generate_note_markdown, write_note
-from strategy.betting import generate_tickets
+from src.react_workflow import ReactiveRaceWorkflow, WorkflowSettings
+
+
+REQUIRED_CONFIG_KEYS = {
+    "race_name",
+    "race_date",
+    "track",
+    "race_number",
+    "source_url",
+    "output_slug",
+    "note_title",
+    "note_tags",
+}
 
 
 def load_race_configs(path: Path) -> list[dict]:
     configs = json.loads(path.read_text(encoding="utf-8"))
-    required = {"race_name", "race_date", "track", "race_number", "source_url", "output_slug", "note_title", "note_tags"}
     for idx, cfg in enumerate(configs, start=1):
-        missing = sorted(required - set(cfg.keys()))
+        missing = sorted(REQUIRED_CONFIG_KEYS - set(cfg.keys()))
         if missing:
             raise ValueError(f"config index={idx} missing keys: {missing}")
     return configs
@@ -31,97 +42,101 @@ def load_race_configs(path: Path) -> list[dict]:
 def run_analysis_phase(
     race_configs: list[dict],
     *,
-    race_urls: list[str] | None = None,
     force_rebuild: bool = False,
     race_limit: int | None = None,
     horse_limit: int | None = None,
+    reprocess_raw: bool = False,
+    max_repairs: int = 1,
+    bankroll_per_race: int = 1000,
+    min_ev: float = 1.03,
+    mode: str = "balanced",
 ) -> dict:
     logging.info("analysis phase started")
-    urls = race_urls or [cfg["source_url"] for cfg in race_configs]
 
-    pipeline = JRAPipeline(ScrapeConfig())
-    try:
-        pipeline.run(
-            race_urls=urls,
-            force_rebuild=force_rebuild,
-            race_limit=race_limit,
-            horse_limit=horse_limit,
-        )
-    finally:
-        pipeline.close()
+    config = ScrapeConfig()
+    workflow = ReactiveRaceWorkflow(
+        config,
+        settings=WorkflowSettings(
+            max_repair_attempts=max_repairs,
+            bankroll_per_race=bankroll_per_race,
+            min_ev=min_ev,
+            mode=mode,
+        ),
+    )
+    outputs = workflow.run(
+        race_configs,
+        force_rebuild=force_rebuild,
+        race_limit=race_limit,
+        horse_limit=horse_limit,
+        reprocess_raw=reprocess_raw,
+    )
 
-    processed_path = ROOT / "data/processed/race_last5.csv"
+    ev_rows = list(dict(outputs.get("ev_calculator") or {}).get("ev_rows") or [])
+    review = dict(outputs.get("reviewer") or {})
+    quality_report = dict(dict(outputs.get("data_collector") or {}).get("quality_report") or {})
+    tickets = dict(outputs.get("bet_builder") or {})
+
     ev_path = ROOT / "data/processed/race_ev.csv"
     note_path = ROOT / "report/note.md"
     payload_path = ROOT / "report/publish_payload.json"
+    run_path = ROOT / "report/pipeline_run.json"
 
-    rows = load_rows(processed_path)
-    scored = compute_ev(rows)
-    save_ev(scored, ev_path)
-
-    race_name = race_configs[0]["race_name"]
-    tickets = generate_tickets(scored, mode="safe")
-    note = generate_note_markdown(race_name, scored, tickets)
+    save_ev(ev_rows, ev_path)
+    primary_race_name = race_configs[0]["race_name"] if race_configs else "JRAレース"
+    note = generate_note_markdown(
+        primary_race_name,
+        ev_rows,
+        tickets,
+        review=review,
+        quality_report=quality_report,
+    )
     write_note(note_path, note)
 
     payload = {
-        "title": race_configs[0]["note_title"],
-        "tags": race_configs[0]["note_tags"],
-        "slug": race_configs[0]["output_slug"],
-        "race_name": race_name,
-        "race_date": race_configs[0]["race_date"],
-        "markdown_path": str(note_path),
+        "title": race_configs[0]["note_title"] if race_configs else "JRA EV Analysis",
+        "tags": race_configs[0]["note_tags"] if race_configs else ["競馬", "EV", "JRA"],
+        "slug": race_configs[0]["output_slug"] if race_configs else "jra-ev-analysis",
+        "race_name": primary_race_name,
+        "race_date": race_configs[0]["race_date"] if race_configs else "",
         "body_markdown_path": str(note_path),
         "mode_default": "browser:draft",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dry_run": True,
+        "review_status": review.get("status", "UNKNOWN"),
+        "quality_report_path": str(config.quality_report_path),
+        "ev_csv_path": str(ev_path),
     }
     payload_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    run_path.write_text(json.dumps(outputs, ensure_ascii=False, indent=2), encoding="utf-8")
     logging.info("analysis phase completed")
     return payload
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run JRA analysis pipeline")
-    parser.add_argument(
-        "--config-path",
-        default=str(ROOT / "config/races.json"),
-        help="Race config json path",
-    )
-    parser.add_argument(
-        "--race-url",
-        action="append",
-        default=None,
-        help="Direct race URL. Can be repeated.",
-    )
-    parser.add_argument(
-        "--force-rebuild",
-        action="store_true",
-        help="Ignore processed state and rebuild races",
-    )
-    parser.add_argument(
-        "--race-limit",
-        type=int,
-        default=None,
-        help="Max races to process (default: no limit)",
-    )
-    parser.add_argument(
-        "--horse-limit",
-        type=int,
-        default=None,
-        help="Max horses per race (default: no limit)",
-    )
+    parser = argparse.ArgumentParser(description="Run the fully orchestrated JRA EV workflow")
+    parser.add_argument("--config-path", default=str(ROOT / "config/races.json"), help="Race config json path")
+    parser.add_argument("--force-rebuild", action="store_true", help="Ignore processed state and rebuild races")
+    parser.add_argument("--reprocess-raw", action="store_true", help="Parse only cached raw HTML and avoid network fetches")
+    parser.add_argument("--race-limit", type=int, default=None, help="Max races to process (default: no limit)")
+    parser.add_argument("--horse-limit", type=int, default=None, help="Max horses per race (default: no limit)")
+    parser.add_argument("--max-repairs", type=int, default=1, help="How many self-repair retries to allow")
+    parser.add_argument("--bankroll-per-race", type=int, default=1000, help="Budget cap per race in yen")
+    parser.add_argument("--min-ev", type=float, default=1.03, help="Minimum EV required for ticket generation")
+    parser.add_argument("--mode", choices=["balanced", "aggressive"], default="balanced", help="Ticketing mode")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    cfg_path = Path(args.config_path)
-    race_configs = load_race_configs(cfg_path)
+    race_configs = load_race_configs(Path(args.config_path))
     payload = run_analysis_phase(
         race_configs,
-        race_urls=args.race_url,
         force_rebuild=args.force_rebuild,
         race_limit=args.race_limit,
         horse_limit=args.horse_limit,
+        reprocess_raw=args.reprocess_raw,
+        max_repairs=args.max_repairs,
+        bankroll_per_race=args.bankroll_per_race,
+        min_ev=args.min_ev,
+        mode=args.mode,
     )
     logging.info("outputs ready: %s", payload)
 

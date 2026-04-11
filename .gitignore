@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 data/raw/*.html
+data/processed/*.csv
+data/processed/*.json
+output/
+report/*.json
+report/*.md
+report/stages/
