@@ -68,6 +68,7 @@ def evaluate_strategy(
         bankroll_per_race=max_bets_per_race * stake_per_bet,
         min_ev=min_ev,
         max_tickets_per_race=max_bets_per_race,
+        prefer_wide=False,
     )
     tickets = list(ticket_plan.get("tickets") or [])
 

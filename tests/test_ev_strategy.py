@@ -14,6 +14,7 @@ class TestEVStrategy(unittest.TestCase):
         self.assertTrue(scored[0].get("ev") is not None)
         tickets = generate_tickets(scored, mode="safe")
         self.assertIn("tansho", tickets)
+        self.assertIn("wide", tickets)
 
 
 if __name__ == "__main__":

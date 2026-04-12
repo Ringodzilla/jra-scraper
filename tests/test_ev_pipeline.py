@@ -139,13 +139,16 @@ class TestEVPipeline(unittest.TestCase):
                 "horse_id": "h1",
                 "horse_name": "A",
                 "horse_number": "1",
-                "win_prob": "0.42",
-                "current_odds": "3.2",
-                "predicted_odds": "2.9",
-                "ev": "1.344",
-                "ev_current": "1.344",
-                "ev_predicted": "1.218",
-                "fair_odds": "2.38",
+                "win_prob": "0.24",
+                "current_odds": "7.0",
+                "predicted_odds": "6.5",
+                "ev": "1.68",
+                "ev_current": "1.68",
+                "ev_predicted": "1.56",
+                "fair_odds": "4.10",
+                "market_prob": "0.14",
+                "consistency": "0.71",
+                "history_count": "5",
             },
             {
                 "race_id": "r1",
@@ -153,19 +156,59 @@ class TestEVPipeline(unittest.TestCase):
                 "horse_name": "B",
                 "horse_number": "2",
                 "win_prob": "0.20",
-                "current_odds": "7.0",
-                "predicted_odds": "7.8",
-                "ev": "1.4",
-                "ev_current": "1.4",
-                "ev_predicted": "1.56",
+                "current_odds": "11.0",
+                "predicted_odds": "10.2",
+                "ev": "1.87",
+                "ev_current": "1.87",
+                "ev_predicted": "1.73",
                 "fair_odds": "5.0",
+                "market_prob": "0.08",
+                "consistency": "0.66",
+                "history_count": "5",
+            },
+            {
+                "race_id": "r1",
+                "horse_id": "h3",
+                "horse_name": "C",
+                "horse_number": "3",
+                "win_prob": "0.14",
+                "current_odds": "13.0",
+                "predicted_odds": "12.5",
+                "ev": "1.82",
+                "ev_current": "1.82",
+                "ev_predicted": "1.75",
+                "fair_odds": "7.10",
+                "market_prob": "0.06",
+                "consistency": "0.63",
+                "history_count": "4",
             },
         ]
-        plan = generate_tickets(ev_rows)
+        for idx in range(4, 10):
+            ev_rows.append(
+                {
+                    "race_id": "r1",
+                    "horse_id": f"h{idx}",
+                    "horse_name": f"X{idx}",
+                    "horse_number": str(idx),
+                    "win_prob": "0.05",
+                    "current_odds": "18.0",
+                    "predicted_odds": "18.5",
+                    "ev": "0.9",
+                    "ev_current": "0.9",
+                    "ev_predicted": "0.925",
+                    "fair_odds": "20.0",
+                    "market_prob": "0.05",
+                    "consistency": "0.45",
+                    "history_count": "3",
+                }
+            )
+        plan = generate_tickets(ev_rows, prefer_wide=True)
         self.assertIn("tickets", plan)
         self.assertIn("races", plan)
         self.assertTrue(plan["tickets"])
-        self.assertEqual("win", plan["tickets"][0]["bet_type"])
+        self.assertEqual("wide", plan["primary_bet_type"])
+        self.assertEqual("wide", plan["tickets"][0]["bet_type"])
+        self.assertIn("wide_odds_est", plan["tickets"][0])
         self.assertIn("ev_predicted", plan["tickets"][0])
 
     def test_reviewer_rejects_meaningful_ev_divergence(self):
