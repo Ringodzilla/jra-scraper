@@ -8,6 +8,7 @@ from pathlib import Path
 from analysis.ev import EVWeights, build_feature_rows, compute_ev, simulate_race_scenarios
 from jra_scraper.config import ScrapeConfig
 from jra_scraper.pipeline import JRAPipeline
+from report.note import build_note_article
 from strategy.betting import generate_tickets
 
 
@@ -180,6 +181,28 @@ class ReviewerAgent:
         }
 
 
+class ArticleWriterAgent:
+    def run(
+        self,
+        race_configs: list[dict[str, object]],
+        *,
+        ev_rows: list[dict[str, object]],
+        ticket_plan: dict[str, object],
+        review: dict[str, object],
+        quality_report: dict[str, object],
+    ) -> dict[str, object]:
+        primary_race = dict(race_configs[0] if race_configs else {})
+        race_name = str(primary_race.get("race_name") or "JRAレース")
+        return build_note_article(
+            race_name,
+            ev_rows,
+            ticket_plan,
+            review=review,
+            quality_report=quality_report,
+            race_config=primary_race,
+        )
+
+
 class ReactiveRaceWorkflow:
     def __init__(
         self,
@@ -197,6 +220,7 @@ class ReactiveRaceWorkflow:
         self.ev_calculator = EVCalculatorAgent(weights=weights)
         self.bet_builder = BetBuilderAgent(self.settings)
         self.reviewer = ReviewerAgent(self.settings)
+        self.article_writer = ArticleWriterAgent()
 
     def run(
         self,
@@ -233,6 +257,13 @@ class ReactiveRaceWorkflow:
                 dict(bet_plan),
                 attempt=attempt,
             )
+            article = self.article_writer.run(
+                race_configs,
+                ev_rows=list(calculated.get("ev_rows") or []),
+                ticket_plan=dict(bet_plan),
+                review=review,
+                quality_report=dict(collected.get("quality_report") or {}),
+            )
 
             final_payload = {
                 "data_collector": collected,
@@ -241,6 +272,7 @@ class ReactiveRaceWorkflow:
                 "ev_calculator": calculated,
                 "bet_builder": bet_plan,
                 "reviewer": review,
+                "article_writer": article,
                 "attempt": attempt,
             }
             self._write_stage_outputs(final_payload)
@@ -258,9 +290,11 @@ class ReactiveRaceWorkflow:
             "04_ev_calculator.json": payload.get("ev_calculator"),
             "05_bet_builder.json": payload.get("bet_builder"),
             "06_reviewer.json": payload.get("reviewer"),
+            "07_article_writer.json": payload.get("article_writer"),
             "run_summary.json": {
                 "attempt": payload.get("attempt"),
                 "review_status": dict(payload.get("reviewer") or {}).get("status"),
+                "article_status": dict(payload.get("article_writer") or {}).get("status"),
             },
         }
         for filename, body in stage_map.items():

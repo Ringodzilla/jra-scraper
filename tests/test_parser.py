@@ -47,6 +47,45 @@ class TestJRAParser(unittest.TestCase):
         self.assertEqual("ルメール", horses[1].current_jockey)
         self.assertEqual("4.8", horses[1].current_odds)
 
+    def test_parse_race_detail_extracts_embedded_history_and_popularity(self):
+        html = """
+        <html><body>
+        <table class="race_table_01">
+          <tr><th>枠</th><th>馬番</th><th>馬名 / 単勝オッズ(人気)</th><th>性齢 / 斤量 / 騎手</th></tr>
+          <tr>
+            <td class="waku">1</td>
+            <td class="num">1</td>
+            <td class="horse">
+              <div class="name_line">
+                <div class="name"><a href="/JRADB/accessU.html?CNAME=a1">サンプルホースA</a></div>
+                <div class="odds"><div class="odds_line"><span class="num"><strong>3.2</strong></span><span class="pop_rank">(1<span>番人気</span>)</span></div></div>
+              </div>
+            </td>
+            <td class="jockey">
+              <p class="weight">55.0kg</p>
+              <p class="jockey"><a href="#">戸崎 圭太</a></p>
+            </td>
+            <td class="past p1">
+              <div class="date_line"><div class="date">2026年3月1日</div><div class="rc">阪神</div></div>
+              <div class="race_line"><div class="name"><a href="/JRADB/accessS.html?CNAME=s1">チューリップ賞</a></div></div>
+              <div class="place_line"><div class="place">2着</div><div class="num"><span class="pop">3<span>番人気</span></span></div></div>
+              <div class="info_line1"><div class="jockey">戸崎 圭太</div><div class="weight">55.0kg</div></div>
+              <div class="info_line2"><span class="dist">1600芝</span><p class="time">1:33.9</p><span class="condition">良</span></div>
+              <div class="info_line3"><div class="corner_list"><ul><li>5</li><li>4</li></ul></div><div class="f3">3F 33.8</div></div>
+            </td>
+          </tr>
+        </table>
+        </body></html>
+        """
+        horses = self.parser.parse_race_detail(html, race_id="20260412_阪神_11", race_name="桜花賞")
+        self.assertEqual(1, len(horses))
+        self.assertEqual("1", horses[0].current_popularity)
+        self.assertEqual("戸崎 圭太", horses[0].current_jockey)
+        self.assertEqual("55.0", horses[0].assigned_weight)
+        self.assertEqual(1, len(horses[0].embedded_history))
+        self.assertEqual("33.8", horses[0].embedded_history[0]["last_3f"])
+        self.assertEqual("3", horses[0].embedded_history[0]["popularity"])
+
     def test_parse_race_detail_raises_when_no_horses_found(self):
         html = "<html><body><table class='race_table_01'><tr><th>馬名</th></tr></table></body></html>"
         with self.assertRaisesRegex(ValueError, "No horses parsed"):

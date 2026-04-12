@@ -117,6 +117,11 @@ class JRAPipeline:
             race_rows: list[dict[str, str]] = []
             race_failed = False
             for horse in horses:
+                embedded_rows = _rows_from_embedded_history(horse)
+                if embedded_rows:
+                    race_rows.extend(embedded_rows)
+                    continue
+
                 horse_html = self.scraper.fetch(
                     horse.horse_url,
                     raw_name=f"horse_{safe_filename(horse.horse_id)}.html",
@@ -363,3 +368,49 @@ def append_live_odds_snapshots(
         for row in pending_rows:
             writer.writerow(row)
     return pending_rows
+
+
+def _rows_from_embedded_history(horse) -> list[dict[str, str]]:
+    embedded_history = list(getattr(horse, "embedded_history", []) or [])
+    if not embedded_history:
+        return []
+
+    rows: list[dict[str, str]] = []
+    for run_idx, history in enumerate(embedded_history[:5], start=1):
+        row = {
+            "race_id": horse.race_id,
+            "horse_id": horse.horse_id,
+            "horse_name": horse.horse_name,
+            "horse_url": horse.horse_url,
+            "run_index": str(history.get("run_index") or run_idx),
+            "frame_number": horse.frame_number,
+            "horse_number": horse.horse_number,
+            "current_jockey": horse.current_jockey,
+            "assigned_weight": horse.assigned_weight,
+            "current_odds": horse.current_odds,
+            "current_popularity": horse.current_popularity,
+            "target_track": horse.target_track,
+            "target_race_date": horse.target_race_date,
+            "target_race_number": horse.target_race_number,
+            "target_surface": horse.target_surface,
+            "target_distance": horse.target_distance,
+            "date": str(history.get("date", "")),
+            "course": str(history.get("course", "")),
+            "race_name": str(history.get("race_name", "")),
+            "distance": str(history.get("distance", "")),
+            "position": str(history.get("position", "")),
+            "time": str(history.get("time", "")),
+            "weight": str(history.get("weight", "")),
+            "jockey": str(history.get("jockey", "")),
+            "pace": str(history.get("pace", "")),
+            "last_3f": str(history.get("last_3f", "")),
+            "track_condition": str(history.get("track_condition", "")),
+            "weather": str(history.get("weather", "")),
+            "passing_order": str(history.get("passing_order", "")),
+            "odds": str(history.get("odds", "")),
+            "popularity": str(history.get("popularity", "")),
+        }
+        if not row["last_3f"]:
+            row["last_3f"] = JRAParser.LAST_3F_NEUTRAL_BASELINE
+        rows.append(row)
+    return rows

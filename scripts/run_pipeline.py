@@ -75,6 +75,7 @@ def run_analysis_phase(
     review = dict(outputs.get("reviewer") or {})
     quality_report = dict(dict(outputs.get("data_collector") or {}).get("quality_report") or {})
     tickets = dict(outputs.get("bet_builder") or {})
+    article = dict(outputs.get("article_writer") or {})
 
     ev_path = ROOT / "data/processed/race_ev.csv"
     note_path = ROOT / "report/note.md"
@@ -83,17 +84,21 @@ def run_analysis_phase(
 
     save_ev(ev_rows, ev_path)
     primary_race_name = race_configs[0]["race_name"] if race_configs else "JRAレース"
-    note = generate_note_markdown(
-        primary_race_name,
-        ev_rows,
-        tickets,
-        review=review,
-        quality_report=quality_report,
+    note = str(
+        article.get("markdown")
+        or generate_note_markdown(
+            primary_race_name,
+            ev_rows,
+            tickets,
+            review=review,
+            quality_report=quality_report,
+            race_config=race_configs[0] if race_configs else {},
+        )
     )
     write_note(note_path, note)
 
     payload = {
-        "title": race_configs[0]["note_title"] if race_configs else "jra-ev-agent analysis",
+        "title": article.get("title") or (race_configs[0]["note_title"] if race_configs else "jra-ev-agent analysis"),
         "tags": race_configs[0]["note_tags"] if race_configs else ["競馬", "EV", "JRA"],
         "slug": race_configs[0]["output_slug"] if race_configs else "jra-ev-analysis",
         "race_name": primary_race_name,
@@ -103,6 +108,7 @@ def run_analysis_phase(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dry_run": True,
         "review_status": review.get("status", "UNKNOWN"),
+        "article_status": article.get("status", "unknown"),
         "quality_report_path": str(config.quality_report_path),
         "ev_csv_path": str(ev_path),
     }

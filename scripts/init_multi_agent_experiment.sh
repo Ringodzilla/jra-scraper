@@ -49,6 +49,14 @@ cat > "${EXP_DIR}/06_reviewer.json" <<'JSON'
 }
 JSON
 
+cat > "${EXP_DIR}/07_article_writer.json" <<'JSON'
+{
+  "status": "ready",
+  "title": "",
+  "markdown": ""
+}
+JSON
+
 cat > "${EXP_DIR}/OWNERSHIP.lock" <<'TXT'
 # Declare files each role touched to avoid concurrent overlap.
 data_collector:
@@ -57,6 +65,7 @@ simulator:
 ev_calculator:
 bet_builder:
 reviewer:
+article_writer:
 TXT
 
 echo "Initialized multi-agent experiment workspace: ${EXP_DIR}"

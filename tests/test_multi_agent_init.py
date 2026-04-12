@@ -24,6 +24,7 @@ def test_init_multi_agent_experiment_creates_templates(tmp_path: Path) -> None:
     assert (exp_dir / "04_ev_calculator.json").exists()
     assert (exp_dir / "05_bet_builder.json").exists()
     assert (exp_dir / "06_reviewer.json").exists()
+    assert (exp_dir / "07_article_writer.json").exists()
     assert (exp_dir / "OWNERSHIP.lock").exists()
 
     for f in exp_dir.glob("*"):
