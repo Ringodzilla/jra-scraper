@@ -28,18 +28,9 @@ def estimate_win_probs(rows: list[dict], weights: ModelWeights | None = None) ->
         scored_group = [_score_row(row, weights) for row in group]
         raw_probs = _softmax([float(row["model_score"]) * weights.temperature for row in scored_group])
         market_probs = _market_probs(scored_group)
+        blended_probs, calibration = _blend_probabilities(scored_group, raw_probs, market_probs, weights)
 
-        blended_probs = []
-        for idx, row in enumerate(scored_group):
-            blended = raw_probs[idx]
-            if market_probs:
-                blended = ((1.0 - weights.market_shrink) * raw_probs[idx]) + (weights.market_shrink * market_probs[idx])
-            blended_probs.append(blended)
-
-        total_prob = sum(blended_probs) or 1.0
-        blended_probs = [value / total_prob for value in blended_probs]
-
-        for row, prob in zip(scored_group, blended_probs):
+        for row, prob, meta in zip(scored_group, blended_probs, calibration):
             odds = _to_float(row.get("current_odds") or row.get("win_odds"), 0.0)
             fair_odds = (1.0 / prob) if prob > 0 else 0.0
             predicted_structural = _predict_structural_odds(row, current_odds=odds, fair_odds=fair_odds)
@@ -70,6 +61,10 @@ def estimate_win_probs(rows: list[dict], weights: ModelWeights | None = None) ->
                     "predicted_odds_source": prediction_source,
                     "win_prob": _fmt(prob),
                     "fair_odds": _fmt(fair_odds),
+                    "market_prob": _fmt(meta["market_prob"]),
+                    "market_shrink_used": _fmt(meta["market_shrink"]),
+                    "probability_cap": _fmt(meta["probability_cap"]),
+                    "probability_band": meta["probability_band"],
                     "ev": _fmt(ev_current),
                     "ev_win": _fmt(ev_current),
                     "ev_current": _fmt(ev_current),
@@ -124,6 +119,50 @@ def _market_probs(rows: list[dict]) -> list[float]:
     return [value / total for value in implied]
 
 
+def _blend_probabilities(
+    rows: list[dict],
+    raw_probs: list[float],
+    market_probs: list[float],
+    weights: ModelWeights,
+) -> tuple[list[float], list[dict[str, float | str]]]:
+    if not raw_probs:
+        return [], []
+
+    if not market_probs:
+        normalized = _normalize_probs(raw_probs)
+        return normalized, [
+            {
+                "market_prob": 0.0,
+                "market_shrink": 0.0,
+                "probability_cap": 1.0,
+                "probability_band": _probability_band(row),
+            }
+            for row in rows
+        ]
+
+    blended_probs: list[float] = []
+    caps: list[float] = []
+    calibration: list[dict[str, float | str]] = []
+    for row, raw_prob, market_prob in zip(rows, raw_probs, market_probs):
+        band = _probability_band(row)
+        shrink = _dynamic_market_shrink(row, base_shrink=weights.market_shrink, band=band)
+        blended = ((1.0 - shrink) * raw_prob) + (shrink * market_prob)
+        cap = _probability_cap(row, market_prob=market_prob, band=band)
+        blended_probs.append(blended)
+        caps.append(cap)
+        calibration.append(
+            {
+                "market_prob": market_prob,
+                "market_shrink": shrink,
+                "probability_cap": cap,
+                "probability_band": band,
+            }
+        )
+
+    normalized = _normalize_probs(blended_probs)
+    return _apply_probability_caps(normalized, caps), calibration
+
+
 def _predict_structural_odds(row: dict, *, current_odds: float, fair_odds: float) -> float:
     if current_odds <= 0:
         return 0.0
@@ -136,7 +175,12 @@ def _predict_structural_odds(row: dict, *, current_odds: float, fair_odds: float
     popularity_gap = _to_float(row.get("popularity_gap"), 0.0)
     if popularity_gap == 0.0 and avg_popularity > 0 and current_popularity > 0:
         popularity_gap = current_popularity - avg_popularity
+    band = _probability_band(row, current_odds=current_odds, popularity=current_popularity)
     popularity_factor = _clamp(1.0 + (0.030 * popularity_gap), 0.84, 1.16)
+    if band == "outsider":
+        popularity_factor = _clamp(popularity_factor, 0.92, 1.08)
+    elif band == "longshot":
+        popularity_factor = _clamp(popularity_factor, 0.96, 1.04)
 
     days_since_last_run = _to_float(row.get("days_since_last_run"), 35.0)
     time_signal = (days_since_last_run - 35.0) / 120.0
@@ -146,6 +190,10 @@ def _predict_structural_odds(row: dict, *, current_odds: float, fair_odds: float
     volatility = _to_float(row.get("odds_volatility"), 0.0)
     history_count = _to_float(row.get("history_count"), 0.0)
     anchor_weight = _clamp(0.16 + (0.04 * min(history_count, 5.0)) + (0.10 * volatility), 0.14, 0.40)
+    if band == "outsider":
+        anchor_weight = max(anchor_weight, 0.30)
+    elif band == "longshot":
+        anchor_weight = max(anchor_weight, 0.52)
 
     adjusted = current_odds * popularity_factor * time_factor
     if fair_odds > 0:
@@ -153,9 +201,22 @@ def _predict_structural_odds(row: dict, *, current_odds: float, fair_odds: float
     if avg_odds > 0:
         adjusted = (0.82 * adjusted) + (0.18 * avg_odds)
 
-    lower = max(1.05, min(current_odds, fair_odds if fair_odds > 0 else current_odds) * 0.65)
+    if band == "favorite":
+        lower_multiplier = 0.72
+        upper_multiplier = 1.18
+    elif band == "contender":
+        lower_multiplier = 0.70
+        upper_multiplier = 1.22
+    elif band == "outsider":
+        lower_multiplier = 0.76
+        upper_multiplier = 1.12
+    else:
+        lower_multiplier = 0.82
+        upper_multiplier = 1.05
+
+    lower = max(1.05, min(current_odds, fair_odds if fair_odds > 0 else current_odds) * lower_multiplier)
     upper_anchor = max(current_odds, fair_odds if fair_odds > 0 else current_odds)
-    upper = max(lower + 0.01, upper_anchor * 1.45)
+    upper = max(lower + 0.01, upper_anchor * upper_multiplier)
     return _clamp(adjusted, lower, upper)
 
 
@@ -198,6 +259,132 @@ def _select_predicted_odds(
     if latest_odds > 0 and sample_count >= 3 and span_minutes >= 5.0:
         return live_odds, "live"
     return structural_odds, "structural"
+
+
+def _normalize_probs(values: list[float]) -> list[float]:
+    total = sum(max(0.0, value) for value in values)
+    if total <= 0:
+        return [0.0 for _ in values]
+    return [max(0.0, value) / total for value in values]
+
+
+def _apply_probability_caps(values: list[float], caps: list[float]) -> list[float]:
+    if not values or len(values) != len(caps):
+        return values
+
+    safe_caps = [max(0.0, min(1.0, cap)) for cap in caps]
+    total_cap = sum(safe_caps)
+    if total_cap <= 0:
+        return [0.0 for _ in values]
+    if total_cap < 1.0:
+        return _normalize_probs(safe_caps)
+
+    base = [max(0.0, value) for value in values]
+    assigned = [0.0 for _ in values]
+    active = set(range(len(base)))
+    remaining_total = 1.0
+
+    while active:
+        base_total = sum(base[idx] for idx in active)
+        if base_total <= 0 or remaining_total <= 0:
+            break
+
+        violated: list[int] = []
+        for idx in active:
+            candidate = remaining_total * (base[idx] / base_total)
+            if candidate > safe_caps[idx]:
+                assigned[idx] = safe_caps[idx]
+                remaining_total -= safe_caps[idx]
+                violated.append(idx)
+
+        if not violated:
+            for idx in active:
+                assigned[idx] = remaining_total * (base[idx] / base_total)
+            remaining_total = 0.0
+            break
+
+        for idx in violated:
+            active.remove(idx)
+            base[idx] = 0.0
+
+    if remaining_total > 1e-9:
+        for idx in range(len(assigned)):
+            slack = max(0.0, safe_caps[idx] - assigned[idx])
+            if slack <= 0:
+                continue
+            take = min(slack, remaining_total)
+            assigned[idx] += take
+            remaining_total -= take
+            if remaining_total <= 1e-9:
+                break
+
+    return _normalize_probs(assigned)
+
+
+def _probability_band(
+    row: dict,
+    *,
+    current_odds: float | None = None,
+    popularity: float | None = None,
+) -> str:
+    odds = current_odds if current_odds is not None else _to_float(row.get("current_odds") or row.get("win_odds"), 0.0)
+    pop = popularity if popularity is not None else _to_float(
+        row.get("popularity_latest") or row.get("current_popularity"),
+        0.0,
+    )
+    if (pop > 0 and pop <= 3) or (odds > 0 and odds <= 6.0):
+        return "favorite"
+    if (pop > 0 and pop <= 8) or (odds > 0 and odds <= 15.0):
+        return "contender"
+    if (pop > 0 and pop <= 12) or (odds > 0 and odds <= 30.0):
+        return "outsider"
+    return "longshot"
+
+
+def _dynamic_market_shrink(row: dict, *, base_shrink: float, band: str) -> float:
+    live_conf = _live_confidence(
+        _to_float(row.get("odds_snapshot_count"), 0.0),
+        _to_float(row.get("odds_span_minutes"), 0.0),
+    )
+    band_target = {
+        "favorite": 0.38,
+        "contender": 0.58,
+        "outsider": 0.74,
+        "longshot": 0.88,
+    }.get(band, base_shrink)
+    return _clamp(max(base_shrink, band_target + (0.06 * live_conf)), 0.0, 0.96)
+
+
+def _probability_cap(row: dict, *, market_prob: float, band: str) -> float:
+    if market_prob <= 0:
+        return 1.0
+
+    ability = _to_float(row.get("ability_score"), 0.0)
+    course = _to_float(row.get("course_score"), 0.0)
+    pace = _to_float(row.get("pace_score"), 0.0)
+    history = min(_to_float(row.get("history_count"), 0.0) / 5.0, 1.0)
+    live_conf = _live_confidence(
+        _to_float(row.get("odds_snapshot_count"), 0.0),
+        _to_float(row.get("odds_span_minutes"), 0.0),
+    )
+    model_conf = _clamp((0.45 * ability) + (0.25 * course) + (0.20 * pace) + (0.10 * history), 0.0, 1.0)
+
+    if band == "favorite":
+        multiplier = 1.28 + (0.10 * model_conf) - (0.02 * live_conf)
+        additive = 0.020
+    elif band == "contender":
+        multiplier = 1.14 + (0.08 * model_conf) - (0.03 * live_conf)
+        additive = 0.010
+    elif band == "outsider":
+        multiplier = 1.06 + (0.05 * model_conf) - (0.05 * live_conf)
+        additive = 0.003
+    else:
+        multiplier = 1.01 + (0.03 * model_conf) - (0.05 * live_conf)
+        additive = 0.0005
+
+    multiplier = max(1.0, multiplier)
+    additive = max(0.0, additive * (1.0 - (0.40 * live_conf)))
+    return min(1.0, (market_prob * multiplier) + additive)
 
 
 def _live_confidence(sample_count: float, span_minutes: float) -> float:

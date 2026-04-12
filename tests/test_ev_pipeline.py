@@ -195,6 +195,43 @@ class TestEVPipeline(unittest.TestCase):
         self.assertIn("predicted/current EV divergence", review["reason"])
         self.assertTrue(review["divergent_rows"])
 
+    def test_compute_ev_calibrates_extreme_longshots_toward_market(self):
+        feature_rows = []
+        odds_ladder = [3.2, 4.1, 6.8, 10.5, 13.2, 18.4, 24.7, 33.0, 55.0, 80.0, 120.0, 260.0]
+        score_ladder = [0.86, 0.82, 0.78, 0.74, 0.70, 0.66, 0.62, 0.58, 0.54, 0.60, 0.64, 0.68]
+        popularity_ladder = [1, 2, 3, 4, 5, 6, 8, 9, 11, 13, 15, 18]
+        for idx, (odds, base_score, popularity) in enumerate(zip(odds_ladder, score_ladder, popularity_ladder), start=1):
+            feature_rows.append(
+                {
+                    "race_id": "r_long",
+                    "horse_id": f"h{idx}",
+                    "horse_name": f"Horse{idx}",
+                    "horse_number": str(idx),
+                    "current_odds": str(odds),
+                    "current_popularity": str(popularity),
+                    "ability_score": base_score,
+                    "course_score": 0.58 if idx >= 10 else 0.52,
+                    "pace_score": 0.57 if idx >= 10 else 0.50,
+                    "weight_score": 0.0,
+                    "jockey_score": 0.48 if idx >= 10 else 0.55,
+                    "market_support": round(1.0 / odds, 4),
+                    "history_count": 4,
+                    "odds_snapshot_count": "2",
+                    "odds_span_minutes": "10",
+                }
+            )
+
+        scored = compute_ev(feature_rows)
+        by_horse = {row["horse_id"]: row for row in scored}
+        favorite = by_horse["h1"]
+        longshot = by_horse["h12"]
+
+        self.assertEqual("longshot", longshot["probability_band"])
+        self.assertGreater(float(longshot["market_shrink_used"]), float(favorite["market_shrink_used"]))
+        self.assertLess(float(longshot["win_prob"]) / float(longshot["market_prob"]), 1.2)
+        self.assertLess(float(longshot["predicted_odds"]), float(longshot["current_odds"]) * 1.06)
+        self.assertLess(float(longshot["win_prob"]), float(favorite["win_prob"]))
+
 
 if __name__ == "__main__":
     unittest.main()

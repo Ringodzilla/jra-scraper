@@ -173,6 +173,7 @@ class JRAParser:
                     target_race_number=target_race_number,
                     target_surface=target_surface,
                     target_distance=target_distance,
+                    embedded_history=self._extract_embedded_history(row),
                 )
             )
 
@@ -459,6 +460,32 @@ class JRAParser:
         if anchor and not out.get("horse_name"):
             out["horse_name"] = self._norm(anchor.get_text(" ", strip=True))
 
+        if not out.get("current_jockey"):
+            jockey_node = row.select_one("td.jockey p.jockey")
+            if jockey_node is not None:
+                out["current_jockey"] = self._norm(jockey_node.get_text(" ", strip=True))
+
+        if not out.get("assigned_weight"):
+            weight_node = row.select_one("td.jockey p.weight")
+            if weight_node is not None:
+                weight_value = self._normalize_decimal_like(self._norm(weight_node.get_text(" ", strip=True)))
+                if weight_value:
+                    out["assigned_weight"] = weight_value
+
+        if not out.get("current_popularity"):
+            popularity_node = row.select_one(".name_line .odds .pop_rank")
+            if popularity_node is not None:
+                popularity = self._normalize_int_like(self._norm(popularity_node.get_text(" ", strip=True)))
+                if popularity:
+                    out["current_popularity"] = popularity
+
+        if not out.get("current_odds"):
+            odds_node = row.select_one(".name_line .odds .num strong")
+            if odds_node is not None:
+                odds_value = self._normalize_decimal_like(self._norm(odds_node.get_text(" ", strip=True)))
+                if odds_value:
+                    out["current_odds"] = odds_value
+
         if not out.get("horse_number"):
             numbers = [self._normalize_int_like(value) for value in texts]
             horse_number = next((n for n in numbers if n and 1 <= int(n) <= 18), "")
@@ -516,8 +543,10 @@ class JRAParser:
         issue_sink: list[ParserIssue] | None,
     ) -> None:
         if row.get("last_3f"):
+            row["last_3f_source"] = row.get("last_3f_source", "observed")
             return
         row["last_3f"] = self.LAST_3F_NEUTRAL_BASELINE
+        row["last_3f_source"] = "fallback"
         self._issue(
             issue_sink,
             stage="parser.horse_history",
@@ -559,6 +588,46 @@ class JRAParser:
             return f"{date}_{track}_{race_no}"
         digest = hashlib.md5((href + race_name).encode("utf-8")).hexdigest()[:10]
         return f"race_{digest}"
+
+    def _extract_embedded_history(self, row) -> list[dict[str, str]]:
+        histories: list[dict[str, str]] = []
+        for run_idx, cell in enumerate(row.select("td.past"), start=1):
+            date = self._extract_text(cell, ".date_line .date")
+            race_name = self._extract_text(cell, ".race_line .name")
+            if not date and not race_name:
+                continue
+
+            href_node = cell.select_one(".race_line .name a[href]")
+            corner_values = [
+                self._normalize_int_like(self._norm(li.get_text(" ", strip=True)))
+                for li in cell.select(".corner_list li")
+            ]
+            last3f_text = self._extract_text(cell, ".info_line3 .f3")
+            last3f = self._extract_last_3f_value(last3f_text)
+
+            histories.append(
+                {
+                    "run_index": str(run_idx),
+                    "date": date,
+                    "course": self._extract_text(cell, ".date_line .rc"),
+                    "race_name": race_name,
+                    "distance": self._extract_text(cell, ".info_line2 .dist"),
+                    "position": self._normalize_int_like(self._extract_text(cell, ".place_line .place")),
+                    "time": self._extract_text(cell, ".info_line2 .time"),
+                    "weight": self._normalize_decimal_like(self._extract_text(cell, ".info_line1 .weight")),
+                    "jockey": self._extract_text(cell, ".info_line1 .jockey"),
+                    "pace": "",
+                    "last_3f": last3f,
+                    "last_3f_source": "embedded" if last3f else "",
+                    "track_condition": self._extract_text(cell, ".info_line2 .condition"),
+                    "weather": "",
+                    "passing_order": "-".join(value for value in corner_values if value),
+                    "odds": "",
+                    "popularity": self._normalize_int_like(self._extract_text(cell, ".place_line .pop")),
+                    "race_result_url": urljoin(self.base_url, href_node.get("href")) if href_node else "",
+                }
+            )
+        return histories
 
     @staticmethod
     def _extract_horse_id(href: str, horse_name: str) -> str:
@@ -614,6 +683,18 @@ class JRAParser:
     def _normalize_decimal_like(value: str) -> str:
         match = re.search(r"\d+(?:\.\d+)?", value)
         return match.group(0) if match else ""
+
+    @staticmethod
+    def _extract_text(node, selector: str) -> str:
+        child = node.select_one(selector)
+        if child is None:
+            return ""
+        return JRAParser._norm(child.get_text(" ", strip=True))
+
+    @staticmethod
+    def _extract_last_3f_value(value: str) -> str:
+        matches = re.findall(r"\d+(?:\.\d+)?", value)
+        return matches[-1] if matches else ""
 
     @staticmethod
     def _norm(value: str) -> str:
