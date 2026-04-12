@@ -25,7 +25,6 @@ REQUIRED_CONFIG_KEYS = {
     "race_number",
     "source_url",
     "output_slug",
-    "note_title",
     "note_tags",
 }
 
@@ -98,7 +97,7 @@ def run_analysis_phase(
     write_note(note_path, note)
 
     payload = {
-        "title": article.get("title") or (race_configs[0]["note_title"] if race_configs else "jra-ev-agent analysis"),
+        "title": article.get("title") or (race_configs[0].get("note_title") if race_configs else "jra-ev-agent analysis"),
         "tags": race_configs[0]["note_tags"] if race_configs else ["競馬", "EV", "JRA"],
         "slug": race_configs[0]["output_slug"] if race_configs else "jra-ev-analysis",
         "race_name": primary_race_name,

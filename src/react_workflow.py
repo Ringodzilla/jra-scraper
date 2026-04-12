@@ -17,8 +17,11 @@ class WorkflowSettings:
     max_repair_attempts: int = 1
     bankroll_per_race: int = 1000
     min_ev: float = 1.03
+    min_wide_ev: float = 1.01
     max_tickets_per_race: int = 2
+    max_wide_tickets_per_race: int = 2
     mode: str = "balanced"
+    prefer_wide: bool = True
     max_ev_delta_abs: float = 0.20
     max_ev_delta_ratio: float = 0.18
     max_odds_gap_ratio: float = 0.25
@@ -92,7 +95,10 @@ class BetBuilderAgent:
             mode=self.settings.mode,
             bankroll_per_race=self.settings.bankroll_per_race,
             min_ev=self.settings.min_ev,
+            min_wide_ev=self.settings.min_wide_ev,
             max_tickets_per_race=self.settings.max_tickets_per_race,
+            max_wide_tickets_per_race=self.settings.max_wide_tickets_per_race,
+            prefer_wide=self.settings.prefer_wide,
         )
 
 
@@ -136,7 +142,8 @@ class ReviewerAgent:
         risky_tickets = [
             ticket
             for ticket in tickets
-            if _to_float(ticket.get("ev")) < self.settings.min_ev or _to_float(ticket.get("win_prob")) < 0.04
+            if _ticket_ev(ticket, default=0.0) < _ticket_min_ev(ticket, self.settings)
+            or _ticket_hit_prob(ticket) < _ticket_min_prob(ticket)
         ]
         if risky_tickets:
             reasons.append("ticket plan contains low-confidence or sub-threshold tickets")
@@ -144,7 +151,8 @@ class ReviewerAgent:
         longshot_overweight = [
             ticket
             for ticket in tickets
-            if _to_float(ticket.get("win_odds")) >= 20.0 and int(_to_float(ticket.get("stake"), 0.0)) > 100
+            if _ticket_odds(ticket) >= _longshot_odds_threshold(ticket)
+            and int(_to_float(ticket.get("stake"), 0.0)) > _longshot_stake_threshold(ticket)
         ]
         if longshot_overweight:
             reasons.append("ticket plan overweights extreme longshots")
@@ -190,9 +198,13 @@ class ArticleWriterAgent:
         ticket_plan: dict[str, object],
         review: dict[str, object],
         quality_report: dict[str, object],
+        odds_snapshots: list[dict[str, object]] | list[dict[str, str]] | None = None,
     ) -> dict[str, object]:
         primary_race = dict(race_configs[0] if race_configs else {})
         race_name = str(primary_race.get("race_name") or "JRAレース")
+        prediction_context = {
+            "odds_captured_at_latest": _latest_snapshot_timestamp(list(odds_snapshots or [])),
+        }
         return build_note_article(
             race_name,
             ev_rows,
@@ -200,6 +212,7 @@ class ArticleWriterAgent:
             review=review,
             quality_report=quality_report,
             race_config=primary_race,
+            prediction_context=prediction_context,
         )
 
 
@@ -263,6 +276,7 @@ class ReactiveRaceWorkflow:
                 ticket_plan=dict(bet_plan),
                 review=review,
                 quality_report=dict(collected.get("quality_report") or {}),
+                odds_snapshots=list(collected.get("odds_snapshots") or []),
             )
 
             final_payload = {
@@ -308,6 +322,15 @@ def _probability_sums(ev_rows: list[dict[str, object]]) -> dict[str, float]:
         race_id = str(row.get("race_id", ""))
         totals[race_id] = totals.get(race_id, 0.0) + _to_float(row.get("win_prob"))
     return totals
+
+
+def _latest_snapshot_timestamp(rows: list[dict[str, object]] | list[dict[str, str]]) -> str:
+    timestamps = [
+        str(row.get("captured_at", "")).strip()
+        for row in rows
+        if str(row.get("captured_at", "")).strip()
+    ]
+    return max(timestamps) if timestamps else ""
 
 
 def _find_divergent_rows(
@@ -384,6 +407,42 @@ def _thresholds_for_popularity(
         "max_ev_delta_ratio": max(defaults["max_ev_delta_ratio"], 0.28),
         "max_odds_gap_ratio": max(defaults["max_odds_gap_ratio"], 0.36),
     }
+
+
+def _ticket_hit_prob(ticket: dict[str, object]) -> float:
+    return _to_float(ticket.get("hit_prob") or ticket.get("wide_prob") or ticket.get("win_prob"))
+
+
+def _ticket_odds(ticket: dict[str, object]) -> float:
+    return _to_float(ticket.get("wide_odds_est") or ticket.get("predicted_wide_odds") or ticket.get("win_odds"))
+
+
+def _ticket_ev(ticket: dict[str, object], *, default: float = 0.0) -> float:
+    return _to_float(ticket.get("ev_current") or ticket.get("ev"), default)
+
+
+def _ticket_min_prob(ticket: dict[str, object]) -> float:
+    if str(ticket.get("bet_type", "")) == "wide":
+        return 0.10
+    return 0.04
+
+
+def _ticket_min_ev(ticket: dict[str, object], settings: WorkflowSettings) -> float:
+    if str(ticket.get("bet_type", "")) == "wide":
+        return settings.min_wide_ev
+    return settings.min_ev
+
+
+def _longshot_odds_threshold(ticket: dict[str, object]) -> float:
+    if str(ticket.get("bet_type", "")) == "wide":
+        return 16.0
+    return 20.0
+
+
+def _longshot_stake_threshold(ticket: dict[str, object]) -> int:
+    if str(ticket.get("bet_type", "")) == "wide":
+        return 300
+    return 100
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:

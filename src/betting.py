@@ -19,6 +19,7 @@ def build_tickets(
         bankroll_per_race=bankroll_per_race,
         min_ev=min_ev,
         max_tickets_per_race=max_bets,
+        prefer_wide=False,
     )
     return list(ticket_plan.get("tickets", []))
 
